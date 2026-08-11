@@ -23,7 +23,9 @@
 				"useImportType": "off"
 			},
 			"correctness": {
-				"noUnusedFunctionParameters": "info"
+				"noUnusedFunctionParameters": "info",
+				"noUndeclaredVariables": "info",
+				"noUnusedVariables": "info"
 			}
 		}
 	},

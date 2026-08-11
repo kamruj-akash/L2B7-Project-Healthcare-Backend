@@ -6,8 +6,7 @@ import { IRequestUser } from "./auth.interface";
 import { AuthService } from "./auth.service";
 
 const registerPatient = catchAsync(async (req: Request, res: Response) => {
-	const payload = req.body;
-	const result = await AuthService.registerPatient(payload);
+	const result = await AuthService.registerPatient(req.body);
 
 	const { accessToken, refreshToken, user, patient } = result;
 
@@ -112,10 +111,20 @@ const refreshToken = catchAsync(async (req: Request, res: Response) => {
 		},
 	});
 });
+const googleLogin = catchAsync(async (req: Request, res: Response) => {
+	const result = await AuthService.googleLogin({ idToken: req.body });
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "User logged in successfully",
+		data: result,
+	});
+});
 
 export const AuthController = {
 	registerPatient,
 	loginUser,
 	getMe,
 	refreshToken,
+	googleLogin,
 };

@@ -8,7 +8,6 @@
 		"build": "tsc",
 		"start": "node dist/src/server.js",
 		"test": "echo \"Error: no test specified\" && exit 1",
-
 		"lint": "bunx --bun @biomejs/biome lint ./src",
 		"lint:fix": "bunx --bun @biomejs/biome lint --write ./src",
 		"check": "bunx --bun @biomejs/biome check ./src",
@@ -26,9 +25,11 @@
 		"cors": "^2.8.6",
 		"dotenv": "^17.4.2",
 		"express": "^5.2.1",
+		"google-auth-library": "^11.0.0",
 		"http-status": "^2.1.0",
 		"jsonwebtoken": "^9.0.3",
-		"pg": "^8.22.0"
+		"pg": "^8.22.0",
+		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.7",
