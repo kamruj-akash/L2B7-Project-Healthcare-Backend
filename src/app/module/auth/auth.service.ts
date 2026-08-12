@@ -77,6 +77,7 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 
 const loginUser = async (payload: ILoginUserPayload) => {
 	const { password } = payload;
+	console.log(payload);
 	const email = payload.email.trim().toLowerCase();
 
 	const user = await prisma.user.findUnique({
