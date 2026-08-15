@@ -24,3 +24,13 @@ export interface IRequestUser {
 export interface IGLogin {
 	idToken: string;
 }
+
+export interface IForgetPassword {
+	email: string;
+}
+
+export interface IResetPassword {
+	email: string;
+	newPassword: string;
+	otp: string;
+}

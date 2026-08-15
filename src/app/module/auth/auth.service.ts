@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { TokenPayload } from "google-auth-library";
 import { JwtPayload, SignOptions } from "jsonwebtoken";
 import {
@@ -9,12 +10,15 @@ import {
 import config from "../../config";
 import { googleClient } from "../../lib/googleClient";
 import { prisma } from "../../lib/prisma";
+import { redisClient } from "../../lib/redis";
 import { jwtUtils } from "../../utils/jwt";
 import {
+	IForgetPassword,
 	IGLogin,
 	ILoginUserPayload,
 	IRegisterPatientPayload,
 	IRequestUser,
+	IResetPassword,
 } from "./auth.interface";
 
 const registerPatient = async (payload: IRegisterPatientPayload) => {
@@ -267,10 +271,72 @@ const googleLogin = async (payload: IGLogin) => {
 	return { accessToken, refreshToken };
 };
 
+export const forgetPassword = async (payload: IForgetPassword) => {
+	const { email } = payload;
+	const isUserExists = await prisma.user.findUniqueOrThrow({
+		where: {
+			email,
+			status: UserStatus.ACTIVE,
+		},
+	});
+
+	if (!isUserExists) {
+		throw new Error("User is not exist or Blocked!");
+	}
+
+	if (
+		isUserExists.authProvider !== AuthProvider.CREDENTIAL &&
+		!isUserExists.password
+	) {
+		throw new Error("Please Login with Google!");
+	}
+
+	const otp = crypto.randomInt(100000, 999999).toString();
+	const key = `forget-password-OTP:${email}`;
+	console.log(otp);
+	await redisClient.set(key, otp, {
+		expiration: {
+			type: "EX",
+			value: 60 * 5,
+		},
+	});
+};
+
+export const resetPassword = async (payload: IResetPassword) => {
+	const { email, newPassword, otp } = payload;
+	const key = `forget-password-OTP:${email}`;
+	const redisOtp = await redisClient.get(key);
+	if (!redisOtp) {
+		throw new Error("OTP is expired or invalid!");
+	}
+
+	if (redisOtp !== otp) {
+		throw new Error("Otp is incorrect!");
+	}
+
+	const hashedPassword = await bcrypt.hash(
+		newPassword,
+		Number(config.bcrypt_salt_rounds),
+	);
+
+	await prisma.user.update({
+		where: {
+			email,
+		},
+		data: {
+			password: hashedPassword,
+		},
+	});
+
+	await redisClient.del([key]);
+};
+
 export const AuthService = {
 	registerPatient,
 	loginUser,
 	getMe,
 	refreshToken,
 	googleLogin,
+	forgetPassword,
+	resetPassword,
 };
