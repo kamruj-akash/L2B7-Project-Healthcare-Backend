@@ -33,16 +33,49 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 		throw new Error("User with this email already exists");
 	}
 
-	const hashedPassword = await bcrypt.hash(password, 8);
+	const newUserData = {
+		name,
+		password: await bcrypt.hash(password, 8),
+		email,
+		role: Role.PATIENT,
+	};
 
-	const createdUser = await prisma.user.create({
+	const otp = crypto.randomInt(100000, 999999).toString();
+	const key = `forget-password-OTP:${email}`;
+	const userKey = `register-user:${email}`;
+
+	await Promise.all([
+		redisClient.set(key, otp, { expiration: { type: "EX", value: 60 * 10 } }),
+		redisClient.set(userKey, JSON.stringify(newUserData), {
+			expiration: { type: "EX", value: 60 * 10 },
+		}),
+	]);
+
+	return;
+};
+
+const verifyEmail = async (payload: { email: string; otp: string }) => {
+	const { email, otp } = payload;
+	const otpKey = `forget-password-OTP:${email}`;
+	const userKey = `register-user:${email}`;
+	const redisOtp = await redisClient.get(otpKey);
+	const userData = await redisClient.get(userKey);
+	if (!userData || !redisOtp) {
+		throw new Error("User data not found, please register again!");
+	}
+	if (redisOtp !== otp) {
+		throw new Error("Invalid OTP");
+	}
+	const { name, password } = JSON.parse(userData);
+
+	const user = await prisma.user.create({
 		data: {
 			name,
 			email,
-			password: hashedPassword,
 			role: Role.PATIENT,
+			password,
 			status: UserStatus.ACTIVE,
-			emailVerified: false,
+			emailVerified: true,
 			patient: {
 				create: { name, email },
 			},
@@ -51,7 +84,8 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 		include: { patient: true },
 	});
 
-	const { patient, ...user } = createdUser;
+	await redisClient.del([otpKey, userKey]);
+
 	const jwtPayload = {
 		userId: user.id,
 		name: user.name,
@@ -71,12 +105,7 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 		config.jwt_refresh_expires_in as SignOptions,
 	);
 
-	return {
-		user,
-		patient,
-		accessToken,
-		refreshToken,
-	};
+	return { accessToken, refreshToken };
 };
 
 const loginUser = async (payload: ILoginUserPayload) => {
@@ -339,4 +368,5 @@ export const AuthService = {
 	googleLogin,
 	forgetPassword,
 	resetPassword,
+	verifyEmail,
 };

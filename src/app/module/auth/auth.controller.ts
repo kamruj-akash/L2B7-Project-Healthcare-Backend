@@ -6,9 +6,20 @@ import { IRequestUser } from "./auth.interface";
 import { AuthService } from "./auth.service";
 
 const registerPatient = catchAsync(async (req: Request, res: Response) => {
-	const result = await AuthService.registerPatient(req.body);
+	await AuthService.registerPatient(req.body);
 
-	const { accessToken, refreshToken, user, patient } = result;
+	sendResponse(res, {
+		statusCode: httpStatus.CREATED,
+		success: true,
+		message:
+			"Patient registered success, Please Verify and Login on Your Account!",
+		data: null,
+	});
+});
+const verifyEmail = catchAsync(async (req: Request, res: Response) => {
+	const result = await AuthService.verifyEmail(req.body);
+
+	const { accessToken, refreshToken } = result;
 
 	res.cookie("accessToken", accessToken, {
 		httpOnly: true,
@@ -26,13 +37,8 @@ const registerPatient = catchAsync(async (req: Request, res: Response) => {
 	sendResponse(res, {
 		statusCode: httpStatus.CREATED,
 		success: true,
-		message: "Patient registered successfully",
-		data: {
-			accessToken,
-			refreshToken,
-			user,
-			patient,
-		},
+		message: "Email Verify Success!",
+		data: null,
 	});
 });
 
@@ -130,7 +136,7 @@ const forgetPassword = catchAsync(async (req: Request, res: Response) => {
 	});
 });
 const resetPassword = catchAsync(async (req: Request, res: Response) => {
-	const result = await AuthService.resetPassword(req.body);
+	await AuthService.resetPassword(req.body);
 	sendResponse(res, {
 		statusCode: httpStatus.OK,
 		success: true,
@@ -147,4 +153,5 @@ export const AuthController = {
 	googleLogin,
 	forgetPassword,
 	resetPassword,
+	verifyEmail,
 };
