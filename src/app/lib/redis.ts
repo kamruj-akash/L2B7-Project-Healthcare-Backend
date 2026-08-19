@@ -8,4 +8,6 @@ export const redisClient = createClient({
 		host: config.redis_host,
 		port: Number(config.redis_port),
 	},
+	// url: "https://direct-mongrel-78482.upstash.io",
+	// token: "gQAAAAAAATKSAAIgcDJmZTJhZWVlOTg1ZmM0ODYwODBlZTEwYWRjMDJjYWVkNQ",
 });

@@ -255,3 +255,20 @@ The username or password in `DATABASE_URL` doesn't match a real role on your Pos
 
 **Login or register throws instead of returning a token**
 Check that `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` are actually set in your `.env` — `jsonwebtoken` throws if the signing secret is `undefined`, and this project doesn't validate environment variables on startup.
+
+
+
+Active Customer Wallets (Successful Transactions)
+Key	Wallet Number
+1	01770618575
+2	01929918378
+3	01770618576
+4	01877722345
+5	01619777282
+6	01619777283
+
+Wallets for Failed Transaction
+
+Key	Wallet Number	Failure Reason
+1	01823074817	Insufficient Balance
+2	01823074818	Debit Block

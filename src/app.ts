@@ -1,12 +1,12 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import crypto from "crypto";
 import express, { Application, Request, Response } from "express";
 import httpStatus from "http-status";
 import config from "./app/config";
-import { redisClient } from "./app/lib/redis";
+import { getBkashIdToken } from "./app/lib/bkash";
 import { globalErrorHandler } from "./app/middleware/globalErrorHandler";
 import { notFound } from "./app/middleware/notFound";
+import { AppointmentRoutes } from "./app/module/appointment/appointment.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { UserRoutes } from "./app/module/user/user.route";
 
@@ -28,17 +28,12 @@ app.use(cookieParser());
 
 app.use("/api/v1/auth", AuthRoutes);
 app.use("/api/v1/user", UserRoutes);
+app.use("/api/v1/appointment", AppointmentRoutes);
 
-app.get("/redis", async (req: Request, res: Response) => {
-	const OTP = crypto.randomInt(100000, 999999);
-	await redisClient.set("forget-password-OTP:akash@gmail.com", "1234", {
-		expiration: {
-			type: "EX",
-			value: 60,
-		},
-	});
+app.get("/test", async (req: Request, res: Response) => {
+	const result = await getBkashIdToken();
 
-	res.send({ message: "Redis is working", OTP });
+	res.send({ message: "Redis is working", result });
 });
 
 // Basic route
