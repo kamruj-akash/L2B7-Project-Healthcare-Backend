@@ -21,6 +21,7 @@ export default {
 	gClient_id: process.env.GOOGLE_CLIENT_ID as string,
 	gClient_secret: process.env.GOOGLE_CLIENT_SECRET as string,
 	gRedirect_url: process.env.GOOGLE_REDIRECT_URL as string,
+	resend_api: process.env.RESEND_API as string,
 
 	// redis
 	redis_user: process.env.REDIS_USER,
