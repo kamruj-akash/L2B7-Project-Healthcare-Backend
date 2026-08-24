@@ -3,8 +3,8 @@ import { redisClient } from "./redis";
 
 export const getBkashIdToken = async () => {
 	try {
-		const idTokenKey = "bkash:IdToken";
-		const refreshTokenKey = "bkash:refreshToken";
+		const idTokenKey = "bkashAuth:IdToken";
+		const refreshTokenKey = "bkashAuth:refreshToken";
 		let idToken = await redisClient.get(idTokenKey);
 		const idTokenExpire = await redisClient.ttl(idTokenKey);
 		let refreshToken = await redisClient.get(refreshTokenKey);

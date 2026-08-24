@@ -44,11 +44,13 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 	};
 
 	const otp = crypto.randomInt(100000, 999999).toString();
-	const key = `forget-password-OTP:${email}`;
-	const userKey = `register-user:${email}`;
+	const otpKey = `UserRegistration-OTP:${email}`;
+	const userKey = `UserRegistration:${email}`;
 
 	await Promise.all([
-		redisClient.set(key, otp, { expiration: { type: "EX", value: 60 * 10 } }),
+		redisClient.set(otpKey, otp, {
+			expiration: { type: "EX", value: 60 * 10 },
+		}),
 		redisClient.set(userKey, JSON.stringify(newUserData), {
 			expiration: { type: "EX", value: 60 * 10 },
 		}),
@@ -149,8 +151,8 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 
 const verifyEmail = async (payload: { email: string; otp: string }) => {
 	const { email, otp } = payload;
-	const otpKey = `forget-password-OTP:${email}`;
-	const userKey = `register-user:${email}`;
+	const otpKey = `UserRegistration-OTP:${email}`;
+	const userKey = `UserRegistration:${email}`;
 	const redisOtp = await redisClient.get(otpKey);
 	const userData = await redisClient.get(userKey);
 	if (!userData || !redisOtp) {
@@ -549,9 +551,9 @@ export const forgetPassword = async (payload: IForgetPassword) => {
 	}
 
 	const otp = crypto.randomInt(100000, 999999).toString();
-	const key = `forget-password-OTP:${email}`;
+	const otpKey = `ForgetPassword-OTP:${email}`;
 
-	await redisClient.set(key, otp, {
+	await redisClient.set(otpKey, otp, {
 		expiration: {
 			type: "EX",
 			value: 60 * 5,
@@ -657,8 +659,8 @@ export const forgetPassword = async (payload: IForgetPassword) => {
 
 export const resetPassword = async (payload: IResetPassword) => {
 	const { email, newPassword, otp } = payload;
-	const key = `forget-password-OTP:${email}`;
-	const redisOtp = await redisClient.get(key);
+	const otpKey = `ForgetPassword-OTP:${email}`;
+	const redisOtp = await redisClient.get(otpKey);
 	if (!redisOtp) {
 		throw new Error("OTP is expired or invalid!");
 	}
@@ -681,7 +683,7 @@ export const resetPassword = async (payload: IResetPassword) => {
 		},
 	});
 
-	await redisClient.del([key]);
+	await redisClient.del([otpKey]);
 
 	await resend.emails.send({
 		from: "support@zaman.ami.bd",

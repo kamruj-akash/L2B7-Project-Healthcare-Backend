@@ -9,13 +9,18 @@ model User {
   role               Role         @default(PATIENT)
   status             UserStatus   @default(ACTIVE)
   needPasswordChange Boolean      @default(false)
+  phoneNo            String?
   profileImage       String?
   imagePublicId      String?
-  isDeleted          Boolean      @default(false)
-  deletedAt          DateTime?
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
-  patient            Patient?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // references
+  patient Patient?
+  doctor  Doctor?
 
   @@unique([email])
   @@map("users")
