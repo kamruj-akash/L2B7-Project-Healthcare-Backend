@@ -6,7 +6,9 @@ import {
 	DoctorVerificationStatus,
 	Role,
 } from "../../../generated/prisma/enums";
+import { DoctorWhereInput } from "../../../generated/prisma/models";
 import config from "../../config";
+import { IQuery } from "../../interface";
 import cloudinary from "../../lib/cloudinary";
 import { prisma } from "../../lib/prisma";
 import { redisClient } from "../../lib/redis";
@@ -244,8 +246,65 @@ const approveDoctor = async (
 	}
 };
 
+const getAllDoctors = async (query: IQuery) => {
+	const searchTerm = query.searchTerm || "";
+	const page = Number(query.page) || 1;
+	const limit = Number(query.limit) || 10;
+	const sortBy = query.sortBy || "createdAt";
+	const sortOrder = query.sortOrder || "asc";
+
+	const andConditions: DoctorWhereInput[] = [];
+
+	if (query.searchTerm) {
+		andConditions.push({
+			OR: [
+				{ name: { contains: searchTerm, mode: "insensitive" } },
+				{ qualification: { contains: searchTerm, mode: "insensitive" } },
+				{ specialization: { contains: searchTerm, mode: "insensitive" } },
+				{ licenseNumber: { contains: searchTerm, mode: "insensitive" } },
+			],
+		});
+	}
+	andConditions.push({ isDeleted: false });
+
+	const doctors = await prisma.doctor.findMany({
+		where: {
+			AND: andConditions,
+		},
+		skip: (page - 1) * limit,
+		take: limit,
+		orderBy: {
+			[sortBy]: sortOrder,
+		},
+		include: {
+			user: {
+				omit: {
+					password: true,
+				},
+			},
+		},
+	});
+
+	const totalDoctors = await prisma.doctor.count({
+		where: {
+			AND: andConditions,
+		},
+	});
+
+	return {
+		data: doctors,
+		meta: {
+			total: totalDoctors,
+			page,
+			limit,
+			totalPages: Math.ceil(totalDoctors / limit),
+		},
+	};
+};
+
 export const doctorService = {
 	applyDoctor,
 	verifyDoctor,
 	approveDoctor,
+	getAllDoctors,
 };
