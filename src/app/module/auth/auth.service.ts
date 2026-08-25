@@ -2,7 +2,6 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { TokenPayload } from "google-auth-library";
 import { JwtPayload, SignOptions } from "jsonwebtoken";
-import { Resend } from "resend";
 import {
 	AuthProvider,
 	Role,
@@ -18,6 +17,7 @@ import {
 	sendRegistrationOtp,
 	sendWelcomeEmail,
 } from "../../lib/resend";
+import { AppError } from "../../utils/appError";
 import { jwtUtils } from "../../utils/jwt";
 import {
 	IForgetPassword,
@@ -28,8 +28,6 @@ import {
 	IResetPassword,
 } from "./auth.interface";
 
-const resend = new Resend(config.resend_api);
-
 const registerPatient = async (payload: IRegisterPatientPayload) => {
 	const { name, password } = payload;
 	const email = payload.email.trim().toLowerCase();
@@ -39,7 +37,7 @@ const registerPatient = async (payload: IRegisterPatientPayload) => {
 	});
 
 	if (isUserExists) {
-		throw new Error("User with this email already exists");
+		throw new AppError(409, "User with this email already exists");
 	}
 
 	const newUserData = {
@@ -74,10 +72,10 @@ const verifyEmail = async (payload: { email: string; otp: string }) => {
 	const redisOtp = await redisClient.get(otpKey);
 	const userData = await redisClient.get(userKey);
 	if (!userData || !redisOtp) {
-		throw new Error("User data not found, please register again!");
+		throw new AppError(400, "User data not found, please register again!");
 	}
 	if (redisOtp !== otp) {
-		throw new Error("Invalid OTP");
+		throw new AppError(400, "Invalid OTP");
 	}
 	const { name, password } = JSON.parse(userData);
 
@@ -133,19 +131,19 @@ const loginUser = async (payload: ILoginUserPayload) => {
 	});
 
 	if (!user) {
-		throw new Error("User not found");
+		throw new AppError(404, "User not found");
 	}
 
 	if (user.status === UserStatus.BLOCKED) {
-		throw new Error("User is blocked");
+		throw new AppError(400, "User is blocked");
 	}
 
 	if (user.isDeleted || user.status === UserStatus.DELETED) {
-		throw new Error("User is deleted");
+		throw new AppError(400, "User is deleted");
 	}
 
 	if (user.password === null && user.googleId !== null) {
-		throw new Error("Please login with google, set password!");
+		throw new AppError(400, "Please login with google, set password!");
 	}
 
 	const isPasswordMatched = await bcrypt.compare(
@@ -154,7 +152,7 @@ const loginUser = async (payload: ILoginUserPayload) => {
 	);
 
 	if (!isPasswordMatched) {
-		throw new Error("Invalid credentials");
+		throw new AppError(400, "Invalid credentials");
 	}
 
 	const jwtPayload = {
@@ -196,7 +194,7 @@ const getMe = async (user: IRequestUser) => {
 	});
 
 	if (!isUserExists) {
-		throw new Error("User not found");
+		throw new AppError(404, "User not found");
 	}
 
 	return isUserExists;
@@ -209,11 +207,7 @@ const refreshToken = async (token: string) => {
 	);
 
 	if (!verifiedRefreshToken.success || !verifiedRefreshToken.data) {
-		throw new Error(
-			config.node_env === "development"
-				? verifiedRefreshToken.error
-				: "Invalid refresh token",
-		);
+		throw new AppError(400, "Invalid refresh token");
 	}
 
 	const data = verifiedRefreshToken.data as JwtPayload;
@@ -223,7 +217,7 @@ const refreshToken = async (token: string) => {
 	});
 
 	if (!user || user.isDeleted || user.status !== UserStatus.ACTIVE) {
-		throw new Error("User is inactive or not found");
+		throw new AppError(400, "User is inactive or not found");
 	}
 
 	const jwtPayload = {
@@ -260,12 +254,15 @@ const googleLogin = async (payload: IGLogin) => {
 			audience: config.gClient_id,
 		});
 		googleIdTokenPayload = ticket.getPayload();
-	} catch (error) {
-		throw new Error("Invalid or expired Google Id Token!", { cause: error });
+	} catch (error: any) {
+		throw new AppError(
+			400,
+			error.message || "Invalid or expired Google Id Token!",
+		);
 	}
 
 	if (!googleIdTokenPayload?.email || !googleIdTokenPayload.email_verified) {
-		throw new Error("Google account email is missing or not verified!");
+		throw new AppError(400, "Google account email is missing or not verified!");
 	}
 
 	const { name, email, sub: googleId } = googleIdTokenPayload;
@@ -325,14 +322,14 @@ export const forgetPassword = async (payload: IForgetPassword) => {
 	});
 
 	if (!isUserExists) {
-		throw new Error("User is not exist or Blocked!");
+		throw new AppError(404, "User is not exist or Blocked!");
 	}
 
 	if (
 		isUserExists.authProvider !== AuthProvider.CREDENTIAL &&
 		!isUserExists.password
 	) {
-		throw new Error("Please Login with Google!");
+		throw new AppError(400, "Please Login with Google!");
 	}
 
 	const otp = crypto.randomInt(100000, 999999).toString();
@@ -353,11 +350,11 @@ export const resetPassword = async (payload: IResetPassword) => {
 	const otpKey = `ForgetPassword-OTP:${email}`;
 	const redisOtp = await redisClient.get(otpKey);
 	if (!redisOtp) {
-		throw new Error("OTP is expired or invalid!");
+		throw new AppError(400, "OTP is expired or invalid!");
 	}
 
 	if (redisOtp !== otp) {
-		throw new Error("Otp is incorrect!");
+		throw new AppError(400, "Otp is incorrect!");
 	}
 
 	const hashedPassword = await bcrypt.hash(

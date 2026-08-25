@@ -1,3 +1,4 @@
+import cron from "node-cron";
 import app from "./app";
 import config from "./app/config";
 import { prisma } from "./app/lib/prisma";
@@ -10,9 +11,12 @@ const main = async () => {
 	try {
 		await prisma.$connect();
 		await redisClient.connect();
-
 		await seedSuperAdmin();
 		console.log("Connected to the database successfully.");
+
+		cron.schedule("0 0 * * *", async () => {
+			console.log("Running daily cleanup task...");
+		});
 		app.listen(PORT, () => {
 			console.log(`Server is running on port ${PORT}`);
 		});
