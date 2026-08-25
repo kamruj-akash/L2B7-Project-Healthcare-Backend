@@ -6,8 +6,8 @@ model Doctor {
   // info
   specialization  String
   licenseNumber   String   @unique
-  qualification   String
-  expYear         Int
+  qualification   String?
+  expYear         Int      @default(0)
   bio             String?
   consultationFee Decimal? @db.Decimal(10, 2)
   contactNumber   String?
@@ -17,10 +17,8 @@ model Doctor {
   reviewedBy         String?
   reviewedAt         DateTime?
 
-  resume          String?
-  resumePublicId String?
-  additionalFiles String[]
-  additionalFilesPublicIds Json?
+  resume          Json?
+  additionalFiles Json[] @default([])
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?

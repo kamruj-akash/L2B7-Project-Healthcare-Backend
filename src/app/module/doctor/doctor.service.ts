@@ -1,0 +1,251 @@
+import bcrypt from "bcryptjs";
+import { UploadApiResponse } from "cloudinary";
+import crypto from "crypto";
+import httpStatus from "http-status";
+import {
+	DoctorVerificationStatus,
+	Role,
+} from "../../../generated/prisma/enums";
+import config from "../../config";
+import cloudinary from "../../lib/cloudinary";
+import { prisma } from "../../lib/prisma";
+import { redisClient } from "../../lib/redis";
+import {
+	sendDoctorApprovalEmail,
+	sendDoctorRejectionEmail,
+	sendDoctorVerificationOtp,
+} from "../../lib/resend";
+import { RequestUser } from "../../middleware/checkAuth";
+import { AppError } from "../../utils/appError";
+import {
+	IApplyDoctor,
+	IApproveDoctorPayload,
+	IVerifyDoctor,
+} from "./doctor.interface";
+
+const applyDoctor = async (doctorData: IApplyDoctor) => {
+	const { email, password, name } = doctorData;
+	const findDoctor = await prisma.user.findUnique({
+		where: { email, role: Role.DOCTOR },
+	});
+
+	if (findDoctor) {
+		throw new Error(
+			"Doctor with this email already exists, Please login instead",
+		);
+	}
+	const otp = crypto.randomInt(100000, 999999).toString();
+	const otpKey = `DoctorRegistration-OTP:${email}`;
+	const doctorKey = `doctorRegistration:${email}`;
+
+	await redisClient.set(otpKey, otp, { EX: 60 * 60 });
+	await redisClient.set(
+		doctorKey,
+		JSON.stringify({
+			name,
+			email,
+			password: await bcrypt.hash(password, Number(config.bcrypt_salt_rounds)),
+		}),
+		{
+			EX: 60 * 60,
+		},
+	);
+	await sendDoctorVerificationOtp(email, otp);
+	return;
+};
+
+const verifyDoctor = async (
+	payload: IVerifyDoctor,
+	resume: Express.Multer.File,
+	additionalFiles: Express.Multer.File[],
+) => {
+	const {
+		email,
+		otp,
+		specialization,
+		licenseNumber,
+		qualification,
+		expYear,
+		bio,
+		consultationFee,
+		contactNumber,
+	} = payload;
+	const otpKey = `DoctorRegistration-OTP:${email}`;
+	const doctorKey = `doctorRegistration:${email}`;
+	const redisOtp = await redisClient.get(otpKey);
+	if (!redisOtp) {
+		throw new Error("OTP has expired or is invalid");
+	}
+	if (redisOtp !== otp) {
+		throw new Error("Invalid OTP");
+	}
+	const doctorData = await redisClient.get(doctorKey);
+	if (!doctorData) {
+		throw new Error("Doctor data not found");
+	}
+	const { name, password } = JSON.parse(doctorData);
+
+	const resumeUploadResult = await new Promise<UploadApiResponse>(
+		(resolve, reject) => {
+			cloudinary.uploader
+				.upload_stream(
+					{
+						resource_type: "auto",
+					},
+
+					async (error, result) => {
+						if (error) {
+							return reject(error);
+						}
+
+						if (!result) {
+							return reject(
+								new AppError(
+									httpStatus.INTERNAL_SERVER_ERROR,
+									"No result returned from Cloudinary",
+								),
+							);
+						}
+
+						resolve(result);
+					},
+				)
+				.end(resume?.buffer);
+		},
+	);
+
+	const additionalFilesUploadResults = await Promise.all(
+		additionalFiles.map((file) => {
+			return new Promise<UploadApiResponse>((resolve, reject) => {
+				cloudinary.uploader
+					.upload_stream(
+						{
+							resource_type: "auto",
+						},
+
+						async (error, result) => {
+							if (error) {
+								return reject(error);
+							}
+
+							if (!result) {
+								return reject(new Error("No result returned from Cloudinary"));
+							}
+							resolve(result);
+						},
+					)
+					.end(file.buffer);
+			});
+		}),
+	);
+
+	const transaction = await prisma.$transaction(async (tx) => {
+		const newDoctor = await tx.user.create({
+			data: {
+				name,
+				email,
+				password: await bcrypt.hash(
+					password,
+					Number(config.bcrypt_salt_rounds),
+				),
+				role: Role.DOCTOR,
+				emailVerified: true,
+				doctor: {
+					create: {
+						name,
+						email,
+						specialization,
+						licenseNumber,
+						qualification,
+						expYear,
+						bio,
+						consultationFee,
+						contactNumber,
+						verificationStatus: DoctorVerificationStatus.PENDING,
+						resume: {
+							resumeUrl: resumeUploadResult.secure_url,
+							publicId: resumeUploadResult.public_id,
+						},
+						additionalFiles: additionalFilesUploadResults.map((file) => ({
+							url: file.secure_url,
+							publicId: file.public_id,
+						})),
+					},
+				},
+			},
+			omit: {
+				password: true,
+			},
+			include: {
+				doctor: true,
+			},
+		});
+
+		await redisClient.del(otpKey);
+		await redisClient.del(doctorKey);
+		return newDoctor;
+	});
+	return transaction;
+};
+
+const approveDoctor = async (
+	payload: IApproveDoctorPayload,
+	reviewer: RequestUser,
+) => {
+	const { doctorId, verificationStatus, rejectionReason } = payload;
+	const existingDoctor = await prisma.doctor.findUnique({
+		where: { id: doctorId },
+		include: { user: true },
+	});
+	if (!existingDoctor) {
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor Application Not Found");
+	}
+
+	if (existingDoctor?.verificationStatus === DoctorVerificationStatus.APPROVE) {
+		throw new AppError(httpStatus.BAD_REQUEST, "Doctor is already approved");
+	}
+	if (
+		existingDoctor?.verificationStatus === DoctorVerificationStatus.REJECTED
+	) {
+		throw new AppError(httpStatus.BAD_REQUEST, "Doctor is rejected");
+	}
+	if (
+		verificationStatus === DoctorVerificationStatus.REJECTED &&
+		!rejectionReason
+	) {
+		throw new AppError(httpStatus.BAD_REQUEST, "Rejection reason is required");
+	}
+
+	await prisma.doctor.update({
+		where: { id: doctorId },
+		data: {
+			verificationStatus: DoctorVerificationStatus[verificationStatus],
+			rejectionReason: rejectionReason || null,
+			reviewedBy: reviewer.userId,
+			reviewedAt: new Date(),
+		},
+	});
+
+	if (verificationStatus === DoctorVerificationStatus.APPROVE) {
+		void sendDoctorApprovalEmail(
+			existingDoctor.user.email,
+			existingDoctor.user.name,
+		).catch((error) => {
+			console.error("Failed to send doctor approval email", error);
+		});
+	} else if (rejectionReason) {
+		void sendDoctorRejectionEmail(
+			existingDoctor.user.email,
+			existingDoctor.user.name,
+			rejectionReason,
+		).catch((error) => {
+			console.error("Failed to send doctor rejection email", error);
+		});
+	}
+};
+
+export const doctorService = {
+	applyDoctor,
+	verifyDoctor,
+	approveDoctor,
+};
