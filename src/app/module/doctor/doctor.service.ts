@@ -132,7 +132,12 @@ const verifyDoctor = async (
 							}
 
 							if (!result) {
-								return reject(new Error("No result returned from Cloudinary"));
+								return reject(
+									new AppError(
+										httpStatus.INTERNAL_SERVER_ERROR,
+										"No result returned from Cloudinary",
+									),
+								);
 							}
 							resolve(result);
 						},

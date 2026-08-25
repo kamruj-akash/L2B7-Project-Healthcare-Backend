@@ -1,3 +1,4 @@
+import { UploadApiResponse } from "cloudinary";
 import httpStatus from "http-status";
 import cloudinary from "../../lib/cloudinary";
 import { prisma } from "../../lib/prisma";
@@ -5,37 +6,54 @@ import { AppError } from "../../utils/appError";
 
 const uploadProfileImage = async (bufferImage: Buffer, email: string) => {
 	const user = await prisma.user.findUnique({ where: { email } });
-	if (user?.imagePublicId) {
-		cloudinary.uploader.destroy(user.imagePublicId, { invalidate: true });
+	if (!user) {
+		throw new AppError(httpStatus.NOT_FOUND, "User not found");
 	}
-	cloudinary.uploader
-		.upload_stream(
-			{
-				resource_type: "auto",
-			},
-			async (error, result) => {
-				if (error) {
-					console.log(error);
-					throw new AppError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
-				}
 
-				const user = await prisma.user.findUnique({ where: { email } });
-				if (user?.imagePublicId && result?.public_id) {
-					await cloudinary.uploader.destroy(user.imagePublicId, {
-						invalidate: true,
-					});
-				}
-
-				await prisma.user.update({
-					where: { email },
-					data: {
-						profileImage: result?.secure_url,
-						imagePublicId: result?.public_id,
+	const uploadResult = await new Promise<UploadApiResponse>(
+		(resolve, reject) => {
+			cloudinary.uploader
+				.upload_stream(
+					{
+						resource_type: "auto",
 					},
-				});
-			},
-		)
-		.end(bufferImage);
+
+					(error, result) => {
+						if (error) {
+							return reject(
+								new AppError(httpStatus.INTERNAL_SERVER_ERROR, error.message),
+							);
+						}
+
+						if (!result) {
+							return reject(
+								new AppError(
+									httpStatus.INTERNAL_SERVER_ERROR,
+									"No result returned from Cloudinary",
+								),
+							);
+						}
+
+						resolve(result);
+					},
+				)
+				.end(bufferImage);
+		},
+	);
+
+	await prisma.user.update({
+		where: { email },
+		data: {
+			profileImage: uploadResult.secure_url,
+			imagePublicId: uploadResult.public_id,
+		},
+	});
+
+	if (user.imagePublicId) {
+		await cloudinary.uploader.destroy(user.imagePublicId, {
+			invalidate: true,
+		});
+	}
 };
 
 export const userService = {
