@@ -1,4 +1,6 @@
+import httpStatus from "http-status";
 import config from "../config";
+import { AppError } from "../utils/appError";
 import { redisClient } from "./redis";
 
 export const getBkashIdToken = async () => {
@@ -56,7 +58,10 @@ export const getBkashIdToken = async () => {
 		);
 
 		if (!response.ok) {
-			throw new Error("Bkash Access Token Failed");
+			throw new AppError(
+				httpStatus.INTERNAL_SERVER_ERROR,
+				"Bkash Access Token Failed",
+			);
 		}
 		const result = await response.json();
 		idToken = result.id_token;
@@ -79,6 +84,10 @@ export const getBkashIdToken = async () => {
 		return idToken;
 	} catch (error) {
 		console.log(error);
-		throw new Error("error.");
+		if (error instanceof AppError) throw error;
+		throw new AppError(
+			httpStatus.INTERNAL_SERVER_ERROR,
+			"Failed to get bKash ID Token",
+		);
 	}
 };

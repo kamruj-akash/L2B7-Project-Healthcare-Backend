@@ -1,5 +1,7 @@
 import { NextFunction, Request, Response } from "express";
+import httpStatus from "http-status";
 import { z } from "zod";
+import { AppError } from "../utils/appError";
 import { catchAsync } from "../utils/catchAsync";
 
 export const dataValidationZod = (zodSchema: z.ZodObject) => {
@@ -10,7 +12,7 @@ export const dataValidationZod = (zodSchema: z.ZodObject) => {
 		if (!result.success) {
 			console.log(result.error);
 			console.log(result.error.issues);
-			throw new Error(result.error.message);
+			throw new AppError(httpStatus.BAD_REQUEST, result.error.message);
 		}
 		req.body = result.data;
 		next();

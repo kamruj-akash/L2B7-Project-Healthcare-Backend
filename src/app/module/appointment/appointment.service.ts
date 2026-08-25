@@ -1,3 +1,4 @@
+import httpStatus from "http-status";
 import {
 	AppointmentStatus,
 	PaymentStatus,
@@ -6,6 +7,7 @@ import config from "../../config";
 import { getBkashIdToken } from "../../lib/bkash";
 import { prisma } from "../../lib/prisma";
 import { RequestUser } from "../../middleware/checkAuth";
+import { AppError } from "../../utils/appError";
 
 const bookAppointment = async (payload: any, user: RequestUser) => {
 	const idToken = await getBkashIdToken();
@@ -52,7 +54,10 @@ const bookAppointment = async (payload: any, user: RequestUser) => {
 		});
 
 		if (result.statusCode !== "0000") {
-			throw new Error(result.statusMessage || "bKash payment creation failed");
+			throw new AppError(
+				httpStatus.BAD_REQUEST,
+				result.statusMessage || "bKash payment creation failed",
+			);
 		}
 
 		return result.bkashURL;
@@ -63,12 +68,19 @@ const bookAppointment = async (payload: any, user: RequestUser) => {
 const bkashCallback = async (query: Record<string, any>) => {
 	const transaction = await prisma.$transaction(async (tx) => {
 		const { paymentID, status, signature } = query;
-		if (!paymentID) throw new Error("Payment Id is Missing");
-		if (!status) throw new Error("Status is Missing");
-		if (!signature) throw new Error("Signature is Missing");
+		if (!paymentID)
+			throw new AppError(httpStatus.BAD_REQUEST, "Payment Id is Missing");
+		if (!status)
+			throw new AppError(httpStatus.BAD_REQUEST, "Status is Missing");
+		if (!signature)
+			throw new AppError(httpStatus.BAD_REQUEST, "Signature is Missing");
 
 		const idToken = await getBkashIdToken();
-		if (!idToken) throw new Error("Failed to get bKash ID Token");
+		if (!idToken)
+			throw new AppError(
+				httpStatus.INTERNAL_SERVER_ERROR,
+				"Failed to get bKash ID Token",
+			);
 
 		const response = await fetch(
 			`${config.bkash_url}/tokenized/checkout/execute`,
@@ -147,12 +159,13 @@ const payAppointment = async (appointmentId: string, user: RequestUser) => {
 		include: { payment: true },
 	});
 
-	if (!appointment) throw new Error("Appointment not found");
+	if (!appointment)
+		throw new AppError(httpStatus.NOT_FOUND, "Appointment not found");
 	if (
 		appointment.payment?.status === PaymentStatus.PAID ||
 		appointment.status === AppointmentStatus.CONFIRMED
 	) {
-		throw new Error("Appointment already paid");
+		throw new AppError(httpStatus.CONFLICT, "Appointment already paid");
 	}
 
 	const response = await fetch(
@@ -187,13 +200,17 @@ const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 		include: { payment: true },
 	});
 
-	if (!appointment) throw new Error("Appointment not found");
+	if (!appointment)
+		throw new AppError(httpStatus.NOT_FOUND, "Appointment not found");
 	if (
 		appointment.status === AppointmentStatus.CANCELED ||
 		appointment.status === AppointmentStatus.COMPLETED ||
 		appointment.status === AppointmentStatus.ONGOING
 	) {
-		throw new Error("Appointment cannot be canceled");
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"Appointment cannot be canceled",
+		);
 	}
 
 	const result = prisma.$transaction(async (tx) => {
@@ -225,7 +242,10 @@ const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 		const result = await response.json();
 		// console.log("bKash refund result", result);
 		if (result.statusCode !== "0000") {
-			throw new Error(result.statusMessage || "bKash refund failed");
+			throw new AppError(
+				httpStatus.BAD_REQUEST,
+				result.statusMessage || "bKash refund failed",
+			);
 		}
 
 		await tx.payment.update({

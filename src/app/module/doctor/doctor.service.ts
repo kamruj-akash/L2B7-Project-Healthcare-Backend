@@ -32,7 +32,8 @@ const applyDoctor = async (doctorData: IApplyDoctor) => {
 	});
 
 	if (findDoctor) {
-		throw new Error(
+		throw new AppError(
+			httpStatus.CONFLICT,
 			"Doctor with this email already exists, Please login instead",
 		);
 	}
@@ -76,14 +77,14 @@ const verifyDoctor = async (
 	const doctorKey = `doctorRegistration:${email}`;
 	const redisOtp = await redisClient.get(otpKey);
 	if (!redisOtp) {
-		throw new Error("OTP has expired or is invalid");
+		throw new AppError(httpStatus.BAD_REQUEST, "OTP has expired or is invalid");
 	}
 	if (redisOtp !== otp) {
-		throw new Error("Invalid OTP");
+		throw new AppError(httpStatus.BAD_REQUEST, "Invalid OTP");
 	}
 	const doctorData = await redisClient.get(doctorKey);
 	if (!doctorData) {
-		throw new Error("Doctor data not found");
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor data not found");
 	}
 	const { name, password } = JSON.parse(doctorData);
 
