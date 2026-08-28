@@ -1,0 +1,300 @@
+import { addDays, startOfDay } from "date-fns";
+import { differenceInMinutes } from "date-fns/fp";
+import httpStatus from "http-status";
+import { ScheduleStatus } from "../../../generated/prisma/enums";
+import { ScheduleWhereInput } from "../../../generated/prisma/models";
+import { IQuery } from "../../interface";
+import { prisma } from "../../lib/prisma";
+import { RequestUser } from "../../middleware/checkAuth";
+import { AppError } from "../../utils/appError";
+import { ICreateSchedule, IUpdateSchedule } from "./schedule.interface";
+
+const createSchedule = async (user: RequestUser, payload: ICreateSchedule) => {
+	const findDoctor = await prisma.doctor.findUnique({
+		where: {
+			userId: user.userId,
+		},
+	});
+
+	if (!findDoctor) {
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
+	}
+
+	const isToday =
+		new Date(payload.startDateTime).toDateString() ===
+		new Date().toDateString();
+	console.log(isToday);
+
+	if (!isToday) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"Schedule can only be created for today's date",
+		);
+	}
+
+	const startOfTheDay = startOfDay(payload.startDateTime);
+	const startOfNextDay = addDays(startOfTheDay, 1);
+	const totalScheduleMin = differenceInMinutes(
+		payload.startDateTime,
+		payload.endDateTime,
+	);
+	const totalSlot = totalScheduleMin / 20;
+
+	const isScheduleAvailable = await prisma.schedule.findFirst({
+		where: {
+			doctorId: findDoctor.id,
+			isDeleted: false,
+			startDateTime: {
+				gte: startOfTheDay,
+				lt: startOfNextDay,
+			},
+		},
+	});
+	if (isScheduleAvailable) {
+		throw new AppError(
+			httpStatus.CONFLICT,
+			"You Have Schedule on this Day! Please Try Tomorrow",
+		);
+	}
+
+	const schedule = await prisma.schedule.create({
+		data: {
+			availableSlot: totalSlot,
+			meetingLink: payload.meetingLink,
+			totalSlot,
+			startDateTime: payload.startDateTime,
+			endDateTime: payload.endDateTime,
+			doctorId: findDoctor.id,
+		},
+		include: {
+			doctor: true,
+		},
+	});
+
+	return schedule;
+};
+
+const updateSchedule = async (
+	scheduleId: string,
+	user: RequestUser,
+	payload: IUpdateSchedule,
+) => {
+	const findDoctor = await prisma.doctor.findUnique({
+		where: {
+			userId: user.userId,
+		},
+	});
+
+	if (!findDoctor) {
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
+	}
+
+	const schedule = await prisma.schedule.findUnique({
+		where: {
+			id: scheduleId,
+		},
+	});
+	if (!schedule || schedule.isDeleted) {
+		throw new AppError(httpStatus.NOT_FOUND, "Schedule not found");
+	}
+	if (
+		schedule.status === ScheduleStatus.PUBLISHED &&
+		schedule.totalSlot !== schedule.availableSlot
+	) {
+		throw new AppError(
+			httpStatus.NOT_FOUND,
+			"Cannot update published schedule",
+		);
+	}
+
+	const ownerCheck = schedule.doctorId === findDoctor.id;
+	if (!ownerCheck) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You are not authorized to update this schedule",
+		);
+	}
+
+	payload.startDateTime = payload.startDateTime || schedule.startDateTime;
+	payload.endDateTime = payload.endDateTime || schedule.endDateTime;
+
+	const startOfTheDay = startOfDay(payload.startDateTime);
+	const startOfNextDay = addDays(startOfTheDay, 1);
+	const totalScheduleMin = differenceInMinutes(startOfTheDay, startOfNextDay);
+	// const totalSlot = totalScheduleMin / 20;
+
+	const updatedSchedule = await prisma.schedule.update({
+		where: {
+			id: scheduleId,
+			doctorId: findDoctor.id,
+		},
+		data: {
+			meetingLink: payload.meetingLink || schedule.meetingLink,
+			startDateTime: startOfTheDay,
+			endDateTime: startOfNextDay,
+		},
+	});
+
+	return updatedSchedule;
+};
+
+const getMySchedule = async (query: IQuery, user: RequestUser) => {
+	const findDoctor = await prisma.doctor.findUnique({
+		where: {
+			email: user.email,
+			userId: user.userId,
+		},
+	});
+	const limit = query.limit ? Number(query.limit) : 10;
+	const page = query.page ? Number(query.page) : 1;
+	const skip = query.skip ? Number(page - 1) * limit : 0;
+	const orderBy = query.orderBy ? query.orderBy : { createdAt: "desc" };
+
+	if (!findDoctor) {
+		throw new AppError(
+			httpStatus.NOT_FOUND,
+			"Doctor Not Found, please apply as a Doctor!",
+		);
+	}
+	const andConditions: ScheduleWhereInput[] = [
+		{ doctorId: findDoctor.id },
+		{ isDeleted: false },
+	];
+	if (query.status) {
+		andConditions.push({ status: query.status });
+	}
+	const doctorSchedule = await prisma.schedule.findMany({
+		where: {
+			AND: andConditions,
+		},
+		skip,
+		take: limit,
+		orderBy,
+		include: {
+			Appointments: {
+				include: {
+					Patient: true,
+				},
+			},
+		},
+	});
+	const totalCount = await prisma.schedule.count({
+		where: {
+			AND: andConditions,
+		},
+	});
+
+	// if (!doctorSchedule) {
+	// 	throw new AppError(httpStatus.NOT_FOUND, "No Schedule Found");
+	// }
+
+	return {
+		data: doctorSchedule,
+		meta: {
+			total: totalCount,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+		},
+	};
+};
+
+const getAllSchedules = async (query: IQuery) => {
+	const limit = query.limit ? Number(query.limit) : 10;
+	const page = query.page ? Number(query.page) : 1;
+	const skip = query.skip ? Number(page - 1) * limit : 0;
+	const orderBy = query.orderBy ? query.orderBy : { createdAt: "desc" };
+	const andConditions: ScheduleWhereInput[] = [];
+
+	if (query.doctorId) {
+		andConditions.push({ doctorId: query.doctorId });
+	}
+	if (query.email) {
+		andConditions.push({
+			doctor: {
+				email: query.email,
+			},
+		});
+	}
+	if (query.status) {
+		andConditions.push({ status: query.status });
+	}
+	if (query.scheduleId) {
+		andConditions.push({ id: query.scheduleId });
+	}
+	if (query.searchTerm) {
+		andConditions.push({
+			doctor: {
+				OR: [
+					{ name: { contains: query.searchTerm, mode: "insensitive" } },
+					{ email: { contains: query.searchTerm, mode: "insensitive" } },
+					{
+						specialization: { contains: query.searchTerm, mode: "insensitive" },
+					},
+				],
+			},
+		});
+	}
+
+	const schedules = await prisma.schedule.findMany({
+		where: {
+			AND: andConditions,
+		},
+		skip,
+		take: limit,
+		orderBy,
+		include: {
+			doctor: true,
+			Appointments: {
+				include: {
+					Patient: true,
+				},
+			},
+		},
+	});
+	const totalCount = await prisma.schedule.count({
+		where: {
+			AND: andConditions,
+		},
+	});
+
+	return {
+		data: schedules,
+		meta: {
+			total: totalCount,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+		},
+	};
+};
+
+const getScheduleById = async (scheduleId: string) => {
+	const schedule = await prisma.schedule.findUnique({
+		where: {
+			id: scheduleId,
+		},
+		include: {
+			doctor: true,
+			Appointments: {
+				include: {
+					Patient: true,
+				},
+			},
+		},
+	});
+
+	if (!schedule || schedule.isDeleted) {
+		throw new AppError(httpStatus.NOT_FOUND, "Schedule not found");
+	}
+
+	return schedule;
+};
+
+export const scheduleService = {
+	createSchedule,
+	getMySchedule,
+	getAllSchedules,
+	getScheduleById,
+	updateSchedule,
+};

@@ -1,0 +1,72 @@
+import httpStatus from "http-status";
+import { RequestUser } from "../../middleware/checkAuth";
+import { catchAsync } from "../../utils/catchAsync";
+import { sendResponse } from "../../utils/sendResponse";
+import { scheduleService } from "./schedule.service";
+
+const createSchedule = catchAsync(async (req, res) => {
+	const payload = req.body;
+	const user = req.user as RequestUser;
+	const schedule = await scheduleService.createSchedule(user, payload);
+	sendResponse(res, {
+		statusCode: 201,
+		success: true,
+		message: "Schedule created successfully",
+		data: schedule,
+	});
+});
+const updateSchedule = catchAsync(async (req, res) => {
+	const payload = req.body;
+	const user = req.user as RequestUser;
+	const schedule = await scheduleService.updateSchedule(
+		req.params.id as string,
+		user,
+		payload,
+	);
+	sendResponse(res, {
+		statusCode: 201,
+		success: true,
+		message: "Schedule updated successfully",
+		data: schedule,
+	});
+});
+const getMySchedule = catchAsync(async (req, res) => {
+	const payload = req.body;
+	const user = req.user as RequestUser;
+	const schedule = await scheduleService.getMySchedule(user, payload);
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Schedule retrieved successfully",
+		data: schedule,
+	});
+});
+
+const getAllSchedules = catchAsync(async (req, res) => {
+	const schedule = await scheduleService.getAllSchedules(req.query);
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Schedule retrieved successfully",
+		data: schedule,
+	});
+});
+const getScheduleById = catchAsync(async (req, res) => {
+	const schedule = await scheduleService.getScheduleById(
+		req.params.id as string,
+	);
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Schedule retrieved successfully",
+		data: schedule,
+	});
+});
+
+export const scheduleController = {
+	createSchedule,
+	getMySchedule,
+	getAllSchedules,
+	getScheduleById,
+	updateSchedule,
+};
