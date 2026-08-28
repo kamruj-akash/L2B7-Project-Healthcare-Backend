@@ -29,5 +29,15 @@ router.patch(
 	auth(Role.ADMIN),
 	scheduleController.updateSchedule,
 );
+router.patch(
+	"/publish-schedule/:id",
+	auth(Role.ADMIN),
+	scheduleController.publishSchedule,
+);
+router.patch(
+	"/delete-schedule/:id",
+	auth(Role.ADMIN),
+	scheduleController.deleteSchedule,
+);
 
 export const ScheduleRoutes = router;
