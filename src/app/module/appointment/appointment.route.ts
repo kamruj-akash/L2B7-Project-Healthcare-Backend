@@ -18,4 +18,10 @@ router.post(
 	AppointmentController.cancelAppointment,
 );
 
+router.patch(
+	"/update",
+	auth(Role.DOCTOR),
+	AppointmentController.updateAppointment,
+);
+
 export const AppointmentRoutes = router;

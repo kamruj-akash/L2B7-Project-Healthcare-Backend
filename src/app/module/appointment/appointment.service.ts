@@ -1,4 +1,4 @@
-import { addMinutes } from "date-fns";
+import { addMinutes, isBefore, subHours } from "date-fns";
 import httpStatus from "http-status";
 import {
 	AppointmentStatus,
@@ -13,10 +13,6 @@ import { AppError } from "../../utils/appError";
 
 const bookAppointment = async (payload: any, user: RequestUser) => {
 	const idToken = await getBkashIdToken();
-	// const payload = {
-	// 	doctorId: payload.doctorId,
-	// 	scheduleId: payload.scheduleId,
-	// };
 
 	const transaction = await prisma.$transaction(async (tx) => {
 		const appointment = await tx.appointment.create({
@@ -270,8 +266,8 @@ const payAppointment = async (appointmentId: string, user: RequestUser) => {
 const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 	const idToken = await getBkashIdToken();
 	const appointment = await prisma.appointment.findUnique({
-		where: { id: appointmentId },
-		include: { payment: true },
+		where: { id: appointmentId, Patient: { id: user.userId } },
+		include: { payment: true, Schedule: true, Doctor: true, Patient: true },
 	});
 
 	if (!appointment)
@@ -286,13 +282,29 @@ const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 			"Appointment cannot be canceled",
 		);
 	}
+	await prisma.appointment.update({
+		where: { id: appointmentId },
+		data: { status: AppointmentStatus.CANCELED },
+	});
+
+	await prisma.schedule.update({
+		where: { id: appointment.scheduleId },
+		data: { availableSlot: { increment: 1 } },
+	});
+
+	const isRefundable = isBefore(
+		new Date(),
+		subHours(appointment.Schedule.startDateTime, 1),
+	);
+
+	if (!isRefundable) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"Appointment cannot be refunded as it is less than 1 hour before the scheduled time",
+		);
+	}
 
 	const result = prisma.$transaction(async (tx) => {
-		await tx.appointment.update({
-			where: { id: appointmentId },
-			data: { status: AppointmentStatus.CANCELED },
-		});
-
 		const response = await fetch(
 			`${config.bkash_url}/tokenized/checkout/payment/refund`,
 			{
@@ -347,9 +359,58 @@ const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 	return result;
 };
 
+const updateAppointment = async (
+	appointmentId: string,
+	status: "COMPLETED" | "ONGOING",
+	user: RequestUser,
+) => {
+	const doctor = await prisma.doctor.findUnique({
+		where: { id: user.userId },
+	});
+	if (!doctor) {
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
+	}
+
+	const appointment = await prisma.appointment.findUnique({
+		where: { id: appointmentId },
+		include: { Doctor: true },
+	});
+	if (!appointment) {
+		throw new AppError(httpStatus.NOT_FOUND, "Appointment not found");
+	}
+	if (appointment.doctorId !== doctor.id) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You are not authorized to update this appointment",
+		);
+	}
+	if (
+		appointment.status === AppointmentStatus.COMPLETED ||
+		appointment.status === AppointmentStatus.CANCELED
+	) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"Appointment cannot be updated as it is already completed or canceled",
+		);
+	}
+	if (appointment.status === AppointmentStatus.PENDING) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"Appointment cannot be updated as it is still pending",
+		);
+	}
+
+	const updatedAppointment = await prisma.appointment.update({
+		where: { id: appointmentId },
+		data: { status: status as AppointmentStatus },
+	});
+	return updatedAppointment;
+};
+
 export const AppointmentService = {
 	bookAppointment,
 	bkashCallback,
 	payAppointment,
 	cancelAppointment,
+	updateAppointment,
 };
