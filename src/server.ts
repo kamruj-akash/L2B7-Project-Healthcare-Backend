@@ -3,7 +3,7 @@ import app from "./app";
 import config from "./app/config";
 import { prisma } from "./app/lib/prisma";
 import { redisClient } from "./app/lib/redis";
-import { seedSuperAdmin } from "./app/utils/seed";
+import { seedSuperAdminAndDoctor } from "./app/utils/seed";
 
 const PORT = config.port;
 
@@ -11,7 +11,7 @@ const main = async () => {
 	try {
 		await prisma.$connect();
 		await redisClient.connect();
-		await seedSuperAdmin();
+		await seedSuperAdminAndDoctor();
 		console.log("Connected to the database successfully.");
 
 		cron.schedule("0 0 * * *", async () => {

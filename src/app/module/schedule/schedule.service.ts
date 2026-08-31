@@ -1,4 +1,4 @@
-import { addDays, startOfDay } from "date-fns";
+import { addDays, isAfter, isSameDay, isToday, startOfDay } from "date-fns";
 import { differenceInMinutes } from "date-fns/fp";
 import httpStatus from "http-status";
 import { ScheduleStatus } from "../../../generated/prisma/enums";
@@ -20,15 +20,19 @@ const createSchedule = async (user: RequestUser, payload: ICreateSchedule) => {
 		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
 	}
 
-	const isToday =
-		new Date(payload.startDateTime).toDateString() ===
-		new Date().toDateString();
-	console.log(isToday);
-
-	if (!isToday) {
+	if (!isSameDay(payload.startDateTime, payload.endDateTime)) {
 		throw new AppError(
 			httpStatus.BAD_REQUEST,
-			"Schedule can only be created for today's date",
+			"Start and End DateTime must be on the same day",
+		);
+	}
+	if (!isToday(payload.startDateTime)) {
+		throw new AppError(httpStatus.BAD_REQUEST, "Start DateTime must be today!");
+	}
+	if (!isAfter(payload.endDateTime, payload.startDateTime)) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"End DateTime must be after Start DateTime",
 		);
 	}
 
@@ -94,9 +98,11 @@ const updateSchedule = async (
 			id: scheduleId,
 		},
 	});
+
 	if (!schedule || schedule.isDeleted) {
 		throw new AppError(httpStatus.NOT_FOUND, "Schedule not found");
 	}
+
 	if (
 		schedule.status === ScheduleStatus.PUBLISHED &&
 		schedule.totalSlot !== schedule.availableSlot
@@ -120,8 +126,24 @@ const updateSchedule = async (
 
 	const startOfTheDay = startOfDay(payload.startDateTime);
 	const startOfNextDay = addDays(startOfTheDay, 1);
-	const totalScheduleMin = differenceInMinutes(startOfTheDay, startOfNextDay);
+	// const totalScheduleMin = differenceInMinutes(startOfTheDay, startOfNextDay);
 	// const totalSlot = totalScheduleMin / 20;
+
+	if (!isSameDay(payload.startDateTime, payload.endDateTime)) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"Start and End DateTime must be on the same day",
+		);
+	}
+	if (!isToday(payload.startDateTime)) {
+		throw new AppError(httpStatus.BAD_REQUEST, "Start DateTime must be today!");
+	}
+	if (!isAfter(payload.endDateTime, payload.startDateTime)) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"End DateTime must be after Start DateTime",
+		);
+	}
 
 	const updatedSchedule = await prisma.schedule.update({
 		where: {
@@ -389,6 +411,34 @@ const deleteSchedule = async (scheduleId: string, user: RequestUser) => {
 
 	return deletedSchedule;
 };
+const getScheduleByDoctorId = async (doctorId: string) => {
+	const findDoctor = await prisma.doctor.findUnique({
+		where: {
+			id: doctorId,
+		},
+	});
+	if (!findDoctor) {
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
+	}
+	const startOfTheDay = startOfDay(new Date());
+	const startOfNextDay = addDays(startOfTheDay, 1);
+	const now = new Date();
+
+	const andConditions: ScheduleWhereInput[] = [
+		{ doctorId: findDoctor.id },
+		{ isDeleted: false },
+		{ status: ScheduleStatus.PUBLISHED },
+		{ startDateTime: { gte: startOfTheDay, lt: startOfNextDay, gt: now } },
+		{ availableSlot: { gt: 0 } },
+	];
+
+	const schedules = await prisma.schedule.findMany({
+		where: {
+			AND: andConditions,
+		},
+	});
+	return schedules;
+};
 
 export const scheduleService = {
 	createSchedule,
@@ -398,4 +448,5 @@ export const scheduleService = {
 	updateSchedule,
 	publishSchedule,
 	deleteSchedule,
+	getScheduleByDoctorId,
 };

@@ -1,3 +1,4 @@
+import { addMinutes } from "date-fns";
 import httpStatus from "http-status";
 import {
 	AppointmentStatus,
@@ -11,10 +12,18 @@ import { AppError } from "../../utils/appError";
 
 const bookAppointment = async (payload: any, user: RequestUser) => {
 	const idToken = await getBkashIdToken();
+	// const payload = {
+	// 	doctorId: payload.doctorId,
+	// 	scheduleId: payload.scheduleId,
+	// };
+
 	const transaction = await prisma.$transaction(async (tx) => {
 		const appointment = await tx.appointment.create({
 			data: {
 				status: AppointmentStatus.PENDING,
+				patientId: user.userId,
+				doctorId: payload.doctorId,
+				scheduleId: payload.scheduleId,
 			},
 		});
 
@@ -98,11 +107,40 @@ const bkashCallback = async (query: Record<string, any>) => {
 		const result = await response.json();
 
 		if (status === "success") {
-			await tx.appointment.update({
+			const appointment = await tx.appointment.findUnique({
 				where: { id: result.merchantInvoiceNumber },
-				data: { status: AppointmentStatus.CONFIRMED },
+				include: { Schedule: true, Patient: true, Doctor: true, payment: true },
 			});
-			await tx.payment.update({
+			if (!appointment) {
+				throw new AppError(
+					httpStatus.NOT_FOUND,
+					"Appointment not found for payment update",
+				);
+			}
+			const newAvailableSlots = appointment.Schedule.availableSlot - 1;
+			const serialNumber =
+				newAvailableSlots - appointment.Schedule.availableSlot + 1;
+
+			const joiningTime = addMinutes(
+				appointment.Schedule.startDateTime,
+				(serialNumber - 1) * 20,
+			);
+
+			const updatedSchedule = await tx.schedule.update({
+				where: { id: appointment.scheduleId },
+				data: { availableSlot: newAvailableSlots },
+			});
+			const updatedAppointment = await tx.appointment.update({
+				where: { id: result.merchantInvoiceNumber },
+				data: {
+					serialNumber,
+					joiningTime,
+					status: AppointmentStatus.CONFIRMED,
+					gatewayResponse: result,
+				},
+			});
+
+			const updatedPayment = await tx.payment.update({
 				where: { merchantInvoiceNumber: result.merchantInvoiceNumber },
 				data: {
 					status: PaymentStatus.PAID,
