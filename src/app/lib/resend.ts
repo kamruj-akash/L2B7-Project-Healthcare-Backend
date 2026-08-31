@@ -1064,14 +1064,26 @@ export const generateAppointmentInvoicePdf = (
 		}
 	});
 
-export const sendAppointmentConfirmationEmail = async (
-	email: string,
-	patientName: string,
-	doctorName: string,
-	meetingLink: string,
-	joiningTime: string | Date,
-	serialNumber: string | number,
-) => {
+export type AppointmentConfirmationPayload = {
+	email: string;
+	patientName: string;
+	doctorName: string;
+	meetingLink: string;
+	joiningTime: string | Date;
+	serialNumber: string | number;
+	/** When provided, a PDF invoice is generated and attached to the email. */
+	invoice?: AppointmentInvoiceData;
+};
+
+export const sendAppointmentConfirmationEmail = async ({
+	email,
+	patientName,
+	doctorName,
+	meetingLink,
+	joiningTime,
+	serialNumber,
+	invoice,
+}: AppointmentConfirmationPayload) => {
 	const patient = escapeHtml(patientName);
 	const doctor = escapeHtml(doctorName);
 	const link = escapeHtml(meetingLink);
@@ -1079,6 +1091,15 @@ export const sendAppointmentConfirmationEmail = async (
 	const time = escapeHtml(
 		joiningTime instanceof Date ? joiningTime.toLocaleString() : joiningTime,
 	);
+
+	const attachments = invoice
+		? [
+				{
+					filename: `healthcare-invoice-${invoice.serialNumber}.pdf`,
+					content: await generateAppointmentInvoicePdf(invoice),
+				},
+			]
+		: undefined;
 
 	await resend.emails.send({
 		from: "support@zaman.ami.bd",
@@ -1206,6 +1227,13 @@ export const sendAppointmentConfirmationEmail = async (
               <p style="margin:20px 0 0 0;font-size:13px;line-height:21px;color:#94a3b8;">
                 This link is meant only for you — please don't share it with anyone else.
               </p>
+              ${
+								invoice
+									? `<p style="margin:10px 0 0 0;font-size:13px;line-height:21px;color:#94a3b8;">
+                Your payment invoice is attached to this email as a PDF.
+              </p>`
+									: ""
+							}
             </td>
           </tr>
 
@@ -1227,6 +1255,7 @@ export const sendAppointmentConfirmationEmail = async (
   </table>
 </body>
 </html>`,
+		attachments,
 	});
 
 	return;

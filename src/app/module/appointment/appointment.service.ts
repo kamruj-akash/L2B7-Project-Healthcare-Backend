@@ -7,6 +7,7 @@ import {
 import config from "../../config";
 import { getBkashIdToken } from "../../lib/bkash";
 import { prisma } from "../../lib/prisma";
+import { sendAppointmentConfirmationEmail } from "../../lib/resend";
 import { RequestUser } from "../../middleware/checkAuth";
 import { AppError } from "../../utils/appError";
 
@@ -117,20 +118,28 @@ const bkashCallback = async (query: Record<string, any>) => {
 					"Appointment not found for payment update",
 				);
 			}
+
+			// bKash can hit the callback more than once — don't book the slot,
+			// or send the confirmation mail, twice.
+			if (appointment.status === AppointmentStatus.CONFIRMED) {
+				return {
+					redirectUrl: `${config.frontend_url}/dashboard/appointments?status=success`,
+				};
+			}
+
 			const newAvailableSlots = appointment.Schedule.availableSlot - 1;
-			const serialNumber =
-				newAvailableSlots - appointment.Schedule.availableSlot + 1;
+			const serialNumber = appointment.Schedule.totalSlot - newAvailableSlots;
 
 			const joiningTime = addMinutes(
 				appointment.Schedule.startDateTime,
 				(serialNumber - 1) * 20,
 			);
 
-			const updatedSchedule = await tx.schedule.update({
+			await tx.schedule.update({
 				where: { id: appointment.scheduleId },
 				data: { availableSlot: newAvailableSlots },
 			});
-			const updatedAppointment = await tx.appointment.update({
+			await tx.appointment.update({
 				where: { id: result.merchantInvoiceNumber },
 				data: {
 					serialNumber,
@@ -155,6 +164,24 @@ const bkashCallback = async (query: Record<string, any>) => {
 
 			return {
 				redirectUrl: `${config.frontend_url}/dashboard/appointments?status=success`,
+				confirmation: {
+					email: appointment.Patient.email,
+					patientName: appointment.Patient.name,
+					doctorName: appointment.Doctor.name,
+					meetingLink: appointment.Schedule.meetingLink,
+					joiningTime,
+					serialNumber,
+					invoice: {
+						patientName: appointment.Patient.name,
+						doctorName: appointment.Doctor.name,
+						serialNumber,
+						joiningTime,
+						amount: updatedPayment.amount.toFixed(2),
+						status: updatedPayment.status,
+						bkashTrxId: updatedPayment.bkashTrxId ?? "N/A",
+						paidAt: updatedPayment.paidAt ?? new Date().toLocaleString(),
+					},
+				},
 			};
 		} else if (status === "failure") {
 			await tx.payment.update({
@@ -187,7 +214,16 @@ const bkashCallback = async (query: Record<string, any>) => {
 		}
 	});
 
-	return transaction;
+	if (transaction.confirmation) {
+		// The payment is already committed — a mail failure must not fail the callback.
+		try {
+			await sendAppointmentConfirmationEmail(transaction.confirmation);
+		} catch (error) {
+			console.error("Failed to send appointment confirmation email:", error);
+		}
+	}
+
+	return { redirectUrl: transaction.redirectUrl };
 };
 
 const payAppointment = async (appointmentId: string, user: RequestUser) => {
