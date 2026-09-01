@@ -168,7 +168,6 @@ const bkashCallback = async (query: Record<string, any>) => {
 					serialNumber,
 					joiningTime,
 					status: AppointmentStatus.CONFIRMED,
-					gatewayResponse: result,
 				},
 			});
 
@@ -220,12 +219,18 @@ const bkashCallback = async (query: Record<string, any>) => {
 				redirectUrl: `${config.frontend_url}/dashboard/appointments?status=failure`,
 			};
 		} else if (status === "cancel") {
-			await tx.appointment.update({
-				where: { id: result.merchantInvoiceNumber },
+			// On cancel the execute call fails, so `result` has no
+			// merchantInvoiceNumber — resolve the appointment via the payment row.
+			const canceledPayment = await tx.payment.update({
+				where: { bkashPaymentId: result.paymentID || paymentID },
 				data: {
-					status: AppointmentStatus.CANCELED,
+					status: PaymentStatus.CANCELED,
 					gatewayResponse: result,
 				},
+			});
+			await tx.appointment.update({
+				where: { id: canceledPayment.appointmentId },
+				data: { status: AppointmentStatus.CANCELED },
 			});
 			return {
 				redirectUrl: `${config.frontend_url}/dashboard/appointments?status=cancel`,
@@ -360,14 +365,6 @@ const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 				result.statusMessage || "bKash refund failed",
 			);
 		}
-
-		await tx.payment.update({
-			where: { merchantInvoiceNumber: appointment.id },
-			data: {
-				status: PaymentStatus.REFUNDED,
-				gatewayResponse: result,
-			},
-		});
 
 		await tx.payment.update({
 			where: { merchantInvoiceNumber: appointment.id },
