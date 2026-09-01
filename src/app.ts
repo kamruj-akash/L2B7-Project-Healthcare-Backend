@@ -9,6 +9,7 @@ import { AppointmentRoutes } from "./app/module/appointment/appointment.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { DoctorRoutes } from "./app/module/doctor/doctor.route";
 import { PaymentRoute } from "./app/module/payment/payment.route";
+import { PrescriptionRoutes } from "./app/module/prescription/prescription.route";
 import { ScheduleRoutes } from "./app/module/schedule/schedule.routes";
 import { UserRoutes } from "./app/module/user/user.route";
 
@@ -35,6 +36,7 @@ app.use("/api/v1/appointment", AppointmentRoutes);
 app.use("/api/v1/doctor", DoctorRoutes);
 app.use("/api/v1/schedule", ScheduleRoutes);
 app.use("/api/v1/payment", PaymentRoute);
+app.use("/api/v1/prescription", PrescriptionRoutes);
 
 // app.get("/test", async (req: Request, res: Response) => {
 // 	const result = await getBkashIdToken();

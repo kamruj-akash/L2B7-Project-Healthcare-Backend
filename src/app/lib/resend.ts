@@ -1260,3 +1260,152 @@ export const sendAppointmentConfirmationEmail = async ({
 
 	return;
 };
+
+export const sendPrescriptionEmail = async (
+	email: string,
+	prescriptionUrl: string,
+	prescriptionPdf?: Buffer,
+) => {
+	const link = escapeHtml(prescriptionUrl);
+	const issuedOn = escapeHtml(new Date().toLocaleDateString());
+
+	const attachments = prescriptionPdf
+		? [
+				{
+					filename: `healthcare-prescription-${Date.now()}.pdf`,
+					content: prescriptionPdf,
+				},
+			]
+		: undefined;
+
+	await resend.emails.send({
+		from: "support@zaman.ami.bd",
+		to: email,
+		subject: "Your HealthCare prescription is ready",
+		html: `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="x-apple-disable-message-reformatting" />
+<title>Your HealthCare prescription</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+    Your prescription from your recent consultation is ready to view and download.
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.08);">
+
+          <tr>
+            <td style="background-color:#0d9488;padding:26px 32px;" align="left">
+              <span style="color:#ffffff;font-size:19px;font-weight:700;letter-spacing:-0.2px;">
+                &#43;&nbsp; HealthCare
+              </span>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:36px 32px 0 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px;">
+                <tr>
+                  <td style="background-color:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;padding:7px 14px;font-size:12px;font-weight:600;color:#0f766e;letter-spacing:0.3px;">
+                    &#10003;&nbsp; PRESCRIPTION READY
+                  </td>
+                </tr>
+              </table>
+
+              <h1 style="margin:0 0 10px 0;font-size:20px;line-height:28px;color:#0f172a;font-weight:600;">
+                Your prescription is ready
+              </h1>
+              <p style="margin:0 0 26px 0;font-size:15px;line-height:24px;color:#475569;">
+                Your consultation is complete and your doctor has issued a prescription. You can view it online or use the PDF attached to this email.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:0 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border-radius:10px;">
+                <tr>
+                  <td style="padding:18px 22px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding-bottom:10px;font-size:13px;line-height:20px;color:#64748b;width:40%;">Account</td>
+                        <td style="padding-bottom:10px;font-size:13px;line-height:20px;color:#0f172a;font-weight:600;" align="right">${escapeHtml(email)}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:13px;line-height:20px;color:#64748b;">Issued on</td>
+                        <td style="font-size:13px;line-height:20px;color:#0f172a;font-weight:600;" align="right">${issuedOn}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding:26px 32px 0 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="background-color:#0d9488;border-radius:8px;">
+                    <a href="${link}"
+                       style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">
+                      View prescription
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:14px 0 0 0;font-size:12px;line-height:19px;color:#94a3b8;word-break:break-all;">
+                Button not working? Use this link:<br />
+                <a href="${link}" style="color:#0d9488;text-decoration:none;">${link}</a>
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:26px 32px 30px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background-color:#fefce8;border-left:3px solid #eab308;border-radius:6px;padding:14px 16px;">
+                    <p style="margin:0;font-size:13px;line-height:21px;color:#713f12;">
+                      Take the medicines exactly as written. Don't change the dose or stop early without talking to your doctor, and reach out if anything feels wrong.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:20px 0 0 0;font-size:13px;line-height:21px;color:#94a3b8;">
+                This prescription is personal to you — please don't share the link with anyone else.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="border-top:1px solid #e2e8f0;padding:22px 32px 28px 32px;">
+              <p style="margin:0 0 6px 0;font-size:12px;line-height:19px;color:#94a3b8;">
+                Questions? Reach us at
+                <a href="mailto:support@healthcare.com" style="color:#0d9488;text-decoration:none;">support@healthcare.com</a>
+              </p>
+              <p style="margin:0;font-size:12px;line-height:19px;color:#94a3b8;">
+                &copy; 2026 HealthCare. This is an automated message, please do not reply.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`,
+		attachments,
+	});
+
+	return;
+};
