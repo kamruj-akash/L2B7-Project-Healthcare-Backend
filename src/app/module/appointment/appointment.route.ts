@@ -24,4 +24,28 @@ router.patch(
 	AppointmentController.updateAppointment,
 );
 
+router.get(
+	"/my-appointments",
+	auth(Role.PATIENT),
+	AppointmentController.getMyAppointments,
+);
+
+router.get(
+	"/doctor-appointments",
+	auth(Role.DOCTOR),
+	AppointmentController.getDoctorAppointments,
+);
+
+router.get(
+	"/single-appointment/:id",
+	auth(Role.PATIENT, Role.DOCTOR),
+	AppointmentController.getSingleAppointments,
+);
+
+router.get(
+	"/all-appointments",
+	auth(Role.ADMIN),
+	AppointmentController.getAllAppointments,
+);
+
 export const AppointmentRoutes = router;

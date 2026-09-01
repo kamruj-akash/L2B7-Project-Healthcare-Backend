@@ -76,10 +76,71 @@ const updateAppointment = catchAsync(async (req: Request, res: Response) => {
 	});
 });
 
+const getAllAppointments = catchAsync(async (req: Request, res: Response) => {
+	const result = await AppointmentService.getAllAppointments(req.query);
+
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "All appointments fetched successfully!",
+		data: result,
+	});
+});
+
+const getMyAppointments = catchAsync(async (req: Request, res: Response) => {
+	const user = req.user as RequestUser;
+	const result = await AppointmentService.getMyAppointments(req.query, user);
+
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "My appointments fetched successfully!",
+		data: result,
+	});
+});
+
+const getDoctorAppointments = catchAsync(
+	async (req: Request, res: Response) => {
+		const user = req.user as RequestUser;
+		const result = await AppointmentService.getDoctorAppointments(
+			req.query,
+			user,
+		);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Doctor appointments fetched successfully!",
+			data: result,
+		});
+	},
+);
+const getSingleAppointments = catchAsync(
+	async (req: Request, res: Response) => {
+		const { appointmentId } = req.params;
+		const user = req.user as RequestUser;
+		const result = await AppointmentService.getSingleAppointments(
+			appointmentId as string,
+			user,
+		);
+
+		sendResponse(res, {
+			statusCode: httpStatus.OK,
+			success: true,
+			message: "Appointment fetched successfully!",
+			data: result,
+		});
+	},
+);
+
 export const AppointmentController = {
 	bookAppointment,
 	bkashCallback,
 	payAppointment,
 	cancelAppointment,
 	updateAppointment,
+	getMyAppointments,
+	getDoctorAppointments,
+	getSingleAppointments,
+	getAllAppointments,
 };
