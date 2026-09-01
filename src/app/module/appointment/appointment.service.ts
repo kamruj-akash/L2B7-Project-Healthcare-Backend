@@ -12,8 +12,12 @@ import { prisma } from "../../lib/prisma";
 import { sendAppointmentConfirmationEmail } from "../../lib/resend";
 import { RequestUser } from "../../middleware/checkAuth";
 import { AppError } from "../../utils/appError";
+import { ICreateAppointment } from "./appointment.interface";
 
-const bookAppointment = async (payload: any, user: RequestUser) => {
+const bookAppointment = async (
+	payload: ICreateAppointment,
+	user: RequestUser,
+) => {
 	const idToken = await getBkashIdToken();
 
 	const transaction = await prisma.$transaction(async (tx) => {

@@ -161,6 +161,7 @@ const updateSchedule = async (
 };
 
 const getMySchedule = async (query: IQuery, user: RequestUser) => {
+	console.log(user);
 	const findDoctor = await prisma.doctor.findUnique({
 		where: {
 			email: user.email,

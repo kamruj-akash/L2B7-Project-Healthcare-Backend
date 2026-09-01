@@ -26,12 +26,12 @@ router.get(
 );
 router.patch(
 	"/schedule/:id",
-	auth(Role.ADMIN),
+	auth(Role.DOCTOR),
 	scheduleController.updateSchedule,
 );
 router.patch(
 	"/publish-schedule/:id",
-	auth(Role.ADMIN),
+	auth(Role.DOCTOR),
 	scheduleController.publishSchedule,
 );
 router.patch(

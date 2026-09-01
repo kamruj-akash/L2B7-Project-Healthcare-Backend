@@ -1,0 +1,931 @@
+{
+	"info": {
+		"_postman_id": "b1f4a9d0-7c3e-4f2a-9a41-ph-healthcare-001",
+		"name": "PH Healthcare System — Backend API",
+		"description": "Full API collection for the PH Healthcare backend (Express 5 + Prisma + bKash + Redis).\n\n## Setup\n1. Import `PH-Healthcare.postman_environment.json` and select it (baseUrl defaults to `http://localhost:4000`, matching `PORT` in .env).\n2. Start the server (`npm run dev`). It seeds:\n   - SUPER_ADMIN — `superadmin@gmail.com` / `Admin123`\n   - DOCTOR — `doctor@gmail.com` / `Doctor123`\n3. Run **Auth → Login (Super Admin)** and **Auth → Login (Doctor)** — tokens are captured automatically into `adminToken` / `doctorToken`.\n4. For a patient: **Auth → Register Patient** → read the OTP from your email → set the `otp` variable → **Auth → Verify Email** → **Auth → Login (Patient)**.\n\n## Auth mechanism\nThe `auth()` middleware reads the token from the `accessToken` cookie first, then falls back to the `Authorization` header (with or without the `Bearer ` prefix). This collection uses the Authorization header with per-role variables so admin, doctor and patient sessions can be held at the same time.\n\n## Suggested run order\nAuth → Doctor (apply / verify / approve) → Schedule (create / publish) → Appointment (book → pay → callback) → Prescription → Payment → Analytics.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": { "type": "noauth" },
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+		{ "key": "apiUrl", "value": "{{baseUrl}}/api/v1", "type": "string" },
+		{ "key": "adminToken", "value": "", "type": "string" },
+		{ "key": "doctorToken", "value": "", "type": "string" },
+		{ "key": "patientToken", "value": "", "type": "string" },
+		{ "key": "refreshToken", "value": "", "type": "string" },
+		{ "key": "patientEmail", "value": "patient1@gmail.com", "type": "string" },
+		{ "key": "patientPassword", "value": "Patient123", "type": "string" },
+		{ "key": "adminEmail", "value": "superadmin@gmail.com", "type": "string" },
+		{ "key": "adminPassword", "value": "Admin123", "type": "string" },
+		{ "key": "doctorEmail", "value": "doctor@gmail.com", "type": "string" },
+		{ "key": "doctorPassword", "value": "Doctor123", "type": "string" },
+		{ "key": "newDoctorEmail", "value": "newdoctor@gmail.com", "type": "string" },
+		{ "key": "newDoctorPassword", "value": "Doctor123", "type": "string" },
+		{ "key": "otp", "value": "", "type": "string" },
+		{ "key": "doctorId", "value": "", "type": "string" },
+		{ "key": "scheduleId", "value": "", "type": "string" },
+		{ "key": "appointmentId", "value": "", "type": "string" },
+		{ "key": "paymentId", "value": "", "type": "string" },
+		{ "key": "prescriptionId", "value": "", "type": "string" }
+	],
+	"item": [
+		{
+			"name": "00 · Health",
+			"item": [
+				{
+					"name": "Root — server alive",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] },
+						"description": "GET / — returns the welcome payload. Use this to confirm the server, Postgres and Redis all booted."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('success flag', () => pm.expect(pm.response.json().success).to.eql(true));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "404 — unknown route",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/does-not-exist", "host": ["{{apiUrl}}"], "path": ["does-not-exist"] },
+						"description": "Exercises the notFound middleware."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "01 · Auth",
+			"description": "`/api/v1/auth`. Registration is OTP-gated: register stashes the user in Redis for 10 minutes and emails an OTP; verify-email creates the real User + Patient rows and returns cookies.",
+			"item": [
+				{
+					"name": "Register Patient",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Test Patient\",\n  \"email\": \"{{patientEmail}}\",\n  \"password\": \"{{patientPassword}}\",\n  \"patient\": {\n    \"contactNumber\": \"01700000000\",\n    \"address\": \"Dhaka, Bangladesh\"\n  }\n}"
+						},
+						"url": { "raw": "{{apiUrl}}/auth/register", "host": ["{{apiUrl}}"], "path": ["auth", "register"] },
+						"description": "Zod-validated: name (3–255), email, password (6–64), optional `patient.contactNumber` / `patient.address`.\n\nNo user row is created yet — an OTP is emailed via Resend and the payload is cached in Redis for 10 minutes. Follow with **Verify Email**."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('201 Created', () => pm.response.to.have.status(201));",
+									"console.log('Check the inbox for', pm.collectionVariables.get('patientEmail'), 'then set the otp variable.');"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Verify Email (OTP)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{patientEmail}}\",\n  \"otp\": \"{{otp}}\"\n}"
+						},
+						"url": { "raw": "{{apiUrl}}/auth/verify-email", "host": ["{{apiUrl}}"], "path": ["auth", "verify-email"] },
+						"description": "Set the `otp` variable to the 6-digit code from the registration email first.\n\nCreates the User + Patient records, sends a welcome email and sets the accessToken/refreshToken cookies. The JSON `data` is `null` — tokens only come back as cookies here, so log in afterwards if you want a bearer token."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": ["pm.test('201 Created', () => pm.response.to.have.status(201));"]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login (Patient)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{patientEmail}}\",\n  \"password\": \"{{patientPassword}}\"\n}"
+						},
+						"url": { "raw": "{{apiUrl}}/auth/login", "host": ["{{apiUrl}}"], "path": ["auth", "login"] },
+						"description": "Saves the access token into `patientToken` and the refresh token into `refreshToken`."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const body = pm.response.json();",
+									"if (body && body.data && body.data.accessToken) {",
+									"  pm.collectionVariables.set('patientToken', body.data.accessToken);",
+									"  pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+									"  console.log('patientToken saved');",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login (Super Admin)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+						},
+						"url": { "raw": "{{apiUrl}}/auth/login", "host": ["{{apiUrl}}"], "path": ["auth", "login"] },
+						"description": "Seeded SUPER_ADMIN (see `src/app/utils/seed.ts`). Saves `adminToken`."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const body = pm.response.json();",
+									"if (body && body.data && body.data.accessToken) {",
+									"  pm.collectionVariables.set('adminToken', body.data.accessToken);",
+									"  console.log('adminToken saved');",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login (Doctor)",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{doctorEmail}}\",\n  \"password\": \"{{doctorPassword}}\"\n}"
+						},
+						"url": { "raw": "{{apiUrl}}/auth/login", "host": ["{{apiUrl}}"], "path": ["auth", "login"] },
+						"description": "Seeded DOCTOR (`doctor@gmail.com` / `Doctor123`). Saves `doctorToken`."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const body = pm.response.json();",
+									"if (body && body.data && body.data.accessToken) {",
+									"  pm.collectionVariables.set('doctorToken', body.data.accessToken);",
+									"  console.log('doctorToken saved');",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Me",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/auth/me", "host": ["{{apiUrl}}"], "path": ["auth", "me"] },
+						"description": "Any authenticated role. Swap the bearer variable to `{{adminToken}}` / `{{doctorToken}}` to test other roles. Returns the user with the `patient` relation, password omitted."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+							}
+						}
+					]
+				},
+				{
+					"name": "Refresh Token",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" },
+							{ "key": "Cookie", "value": "refreshToken={{refreshToken}}", "description": "Fallback — the handler reads req.cookies.refreshToken only." }
+						],
+						"body": { "mode": "raw", "raw": "{}" },
+						"url": { "raw": "{{apiUrl}}/auth/refresh-token", "host": ["{{apiUrl}}"], "path": ["auth", "refresh-token"] },
+						"description": "Reads the refresh token **from the cookie only** — a body or Authorization token is ignored. Postman's cookie jar keeps it after login, so this usually works with no manual header."
+					}
+				},
+				{
+					"name": "Google Login",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"idToken\": \"PASTE_GOOGLE_ID_TOKEN\"\n}" },
+						"url": { "raw": "{{apiUrl}}/auth/google", "host": ["{{apiUrl}}"], "path": ["auth", "google"] },
+						"description": "Requires a real Google ID token issued for the configured GOOGLE_CLIENT_ID.\n\n⚠️ Backend bug: the controller calls `AuthService.googleLogin({ idToken: req.body })` — it wraps the whole body instead of passing `req.body.idToken`, so verification fails even with a valid token. Fix the controller before this route can pass."
+					}
+				},
+				{
+					"name": "Forget Password",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"email\": \"{{patientEmail}}\"\n}" },
+						"url": { "raw": "{{apiUrl}}/auth/forget-password", "host": ["{{apiUrl}}"], "path": ["auth", "forget-password"] },
+						"description": "Emails a 6-digit OTP (Redis TTL 5 min). Only for ACTIVE credential users; Google-only accounts are rejected."
+					}
+				},
+				{
+					"name": "Reset Password",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"email\": \"{{patientEmail}}\",\n  \"otp\": \"{{otp}}\",\n  \"newPassword\": \"NewPass123\"\n}" },
+						"url": { "raw": "{{apiUrl}}/auth/reset-password", "host": ["{{apiUrl}}"], "path": ["auth", "reset-password"] },
+						"description": "Set `otp` to the code from the forget-password email. Sends a confirmation email on success."
+					}
+				},
+				{
+					"name": "Negative — login with wrong password",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"wrongpassword\"\n}" },
+						"url": { "raw": "{{apiUrl}}/auth/login", "host": ["{{apiUrl}}"], "path": ["auth", "login"] }
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": ["pm.test('400 Invalid credentials', () => pm.response.to.have.status(400));"]
+							}
+						}
+					]
+				},
+				{
+					"name": "Negative — protected route without token",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/auth/me", "host": ["{{apiUrl}}"], "path": ["auth", "me"] },
+						"description": "Clear the Postman cookie jar for localhost first, otherwise the accessToken cookie from a previous login authenticates the call."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "02 · User",
+			"description": "`/api/v1/user`",
+			"item": [
+				{
+					"name": "Upload Profile Image",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "PATCH",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{ "key": "profileImage", "type": "file", "src": [], "description": "Pick a local image file. Multer memory storage → Cloudinary upload." }
+							]
+						},
+						"url": { "raw": "{{apiUrl}}/user/profile-image", "host": ["{{apiUrl}}"], "path": ["user", "profile-image"] },
+						"description": "Any authenticated role. multipart/form-data with a single field named `profileImage`. Returns 400 if no file is attached.\n\nNote: the success message is hard-coded as \"Password reset successfully\" in the controller — cosmetic bug."
+					}
+				}
+			]
+		},
+		{
+			"name": "03 · Doctor",
+			"description": "`/api/v1/doctor`. Doctor onboarding is a 3-step flow: apply (OTP email) → verify (multipart, uploads resume) → approve (admin).",
+			"item": [
+				{
+					"name": "Apply as Doctor",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"name\": \"Dr. New Doctor\",\n  \"email\": \"{{newDoctorEmail}}\",\n  \"password\": \"{{newDoctorPassword}}\"\n}" },
+						"url": { "raw": "{{apiUrl}}/doctor/apply", "host": ["{{apiUrl}}"], "path": ["doctor", "apply"] },
+						"description": "Public route. Emails an OTP; continue with **Verify Doctor**."
+					}
+				},
+				{
+					"name": "Verify Doctor (multipart)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "body",
+									"value": "{\"email\":\"{{newDoctorEmail}}\",\"otp\":\"{{otp}}\",\"specialization\":\"Cardiology\",\"licenseNumber\":\"DOC-99887\",\"qualification\":\"MBBS, FCPS\",\"expYear\":8,\"bio\":\"Cardiologist with 8 years of experience.\",\"consultationFee\":\"1500\",\"contactNumber\":\"01711111111\"}",
+									"type": "text",
+									"description": "The controller reads req.body.body and JSON.parses it — the whole payload must be a JSON STRING in a form field literally named 'body'."
+								},
+								{ "key": "resume", "type": "file", "src": [], "description": "Required — a single PDF/doc." },
+								{ "key": "additionalFiles", "type": "file", "src": [], "description": "Optional, up to 5 files. Duplicate this row for multiple files." }
+							]
+						},
+						"url": { "raw": "{{apiUrl}}/doctor/verify", "host": ["{{apiUrl}}"], "path": ["doctor", "verify"] },
+						"description": "Public multipart route. Fields: `body` (JSON string), `resume` (1 file), `additionalFiles` (≤5 files).\n\nJSON keys: email, otp, specialization, licenseNumber, qualification, expYear (number), bio?, consultationFee?, contactNumber."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const body = pm.response.json();",
+									"const d = body && body.data;",
+									"const id = (d && d.id) || (d && d.doctor && d.doctor.id);",
+									"if (id) { pm.collectionVariables.set('doctorId', id); console.log('doctorId saved', id); }"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Approve / Reject Doctor",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"doctorId\": \"{{doctorId}}\",\n  \"verificationStatus\": \"APPROVE\",\n  \"rejectionReason\": \"\"\n}" },
+						"url": { "raw": "{{apiUrl}}/doctor/approve", "host": ["{{apiUrl}}"], "path": ["doctor", "approve"] },
+						"description": "ADMIN / SUPER_ADMIN only.\n\n`verificationStatus`: `PENDING` | `APPROVE` | `REJECTED`. Send `rejectionReason` when rejecting."
+					}
+				},
+				{
+					"name": "Get All Doctors",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/doctor/all-doctors?page=1&limit=10&sortBy=createdAt&sortOrder=asc&searchTerm=",
+							"host": ["{{apiUrl}}"],
+							"path": ["doctor", "all-doctors"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "sortBy", "value": "createdAt", "description": "Any Doctor column: createdAt, name, expYear, consultationFee…" },
+								{ "key": "sortOrder", "value": "asc", "description": "asc | desc" },
+								{ "key": "searchTerm", "value": "", "description": "Case-insensitive across name, qualification, specialization, licenseNumber." }
+							]
+						},
+						"description": "ADMIN / SUPER_ADMIN only. Paginated and searchable. Captures the first doctor id into `doctorId` if it is still empty."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const d = pm.response.json().data || {};",
+									"const list = d.data || d.doctors || (Array.isArray(d) ? d : []);",
+									"if (Array.isArray(list) && list.length && !pm.collectionVariables.get('doctorId')) {",
+									"  pm.collectionVariables.set('doctorId', list[0].id);",
+									"  console.log('doctorId saved', list[0].id);",
+									"}"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "04 · Schedule",
+			"description": "`/api/v1/schedule`. Doctors create DRAFT schedules; admins publish, update and soft-delete them.",
+			"item": [
+				{
+					"name": "Create Schedule (Doctor)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"startDateTime\": \"2026-09-10T10:00:00.000Z\",\n  \"endDateTime\": \"2026-09-10T13:00:00.000Z\",\n  \"meetingLink\": \"https://meet.google.com/abc-defg-hij\"\n}" },
+						"url": { "raw": "{{apiUrl}}/schedule/create-schedule", "host": ["{{apiUrl}}"], "path": ["schedule", "create-schedule"] },
+						"description": "DOCTOR only. ISO-8601 datetimes. Saves the created id into `scheduleId`."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('201 Created', () => pm.response.to.have.status(201));",
+									"const d = pm.response.json().data;",
+									"const id = (d && d.id) || (Array.isArray(d) && d[0] && d[0].id);",
+									"if (id) { pm.collectionVariables.set('scheduleId', id); console.log('scheduleId saved', id); }"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "My Schedules (Doctor)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/schedule/my-schedules?page=1&limit=10&status=",
+							"host": ["{{apiUrl}}"],
+							"path": ["schedule", "my-schedules"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "status", "value": "", "description": "DRAFT | PUBLISHED" }
+							]
+						},
+						"description": "DOCTOR only.\n\n⚠️ Backend bug: the controller passes `req.body` (not `req.query`) into the service, so these query filters are ignored — defaults (page 1, limit 10) always apply."
+					}
+				},
+				{
+					"name": "All Schedules (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/schedule/all-schedules?page=1&limit=10&status=&doctorId=&email=&scheduleId=&searchTerm=",
+							"host": ["{{apiUrl}}"],
+							"path": ["schedule", "all-schedules"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "status", "value": "", "description": "DRAFT | PUBLISHED" },
+								{ "key": "doctorId", "value": "" },
+								{ "key": "email", "value": "", "description": "Exact doctor email." },
+								{ "key": "scheduleId", "value": "" },
+								{ "key": "searchTerm", "value": "", "description": "Doctor name / email / specialization, case-insensitive." }
+							]
+						},
+						"description": "ADMIN only. Note: the service only applies `skip` when a `skip` query param is present, so pass `skip=1` alongside `page` if pagination looks stuck on page 1."
+					}
+				},
+				{
+					"name": "Get Schedule By Id (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/schedule/schedule/{{scheduleId}}", "host": ["{{apiUrl}}"], "path": ["schedule", "schedule", "{{scheduleId}}"] },
+						"description": "ADMIN only."
+					}
+				},
+				{
+					"name": "Update Schedule (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"startDateTime\": \"2026-09-10T11:00:00.000Z\",\n  \"endDateTime\": \"2026-09-10T14:00:00.000Z\",\n  \"meetingLink\": \"https://meet.google.com/xyz-1234-abc\"\n}" },
+						"url": { "raw": "{{apiUrl}}/schedule/schedule/{{scheduleId}}", "host": ["{{apiUrl}}"], "path": ["schedule", "schedule", "{{scheduleId}}"] },
+						"description": "ADMIN only. All three fields are optional."
+					}
+				},
+				{
+					"name": "Publish Schedule (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "PATCH",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/schedule/publish-schedule/{{scheduleId}}", "host": ["{{apiUrl}}"], "path": ["schedule", "publish-schedule", "{{scheduleId}}"] },
+						"description": "ADMIN only. DRAFT → PUBLISHED. Patients can only book published schedules."
+					}
+				},
+				{
+					"name": "Delete Schedule (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "PATCH",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/schedule/delete-schedule/{{scheduleId}}", "host": ["{{apiUrl}}"], "path": ["schedule", "delete-schedule", "{{scheduleId}}"] },
+						"description": "ADMIN only. This is a PATCH (soft delete), not a DELETE."
+					}
+				},
+				{
+					"name": "Negative — patient cannot create a schedule",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"startDateTime\": \"2026-09-10T10:00:00.000Z\",\n  \"endDateTime\": \"2026-09-10T13:00:00.000Z\",\n  \"meetingLink\": \"https://meet.google.com/abc-defg-hij\"\n}" },
+						"url": { "raw": "{{apiUrl}}/schedule/create-schedule", "host": ["{{apiUrl}}"], "path": ["schedule", "create-schedule"] }
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "05 · Appointment",
+			"description": "`/api/v1/appointment`. Booking creates a PENDING appointment plus an UNPAID bKash payment and returns the bKash checkout URL.",
+			"item": [
+				{
+					"name": "Book Appointment (Patient)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"doctorId\": \"{{doctorId}}\",\n  \"scheduleId\": \"{{scheduleId}}\"\n}" },
+						"url": { "raw": "{{apiUrl}}/appointment/booking", "host": ["{{apiUrl}}"], "path": ["appointment", "booking"] },
+						"description": "PATIENT only. Creates the appointment + payment rows in one transaction and calls bKash `tokenized/checkout/create` (amount is hard-coded to 500 BDT).\n\n`data` is the bKash checkout URL — open it in a browser to complete the sandbox payment. Requires working BKASH_* env vars."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const url = pm.response.json().data;",
+									"if (typeof url === 'string') console.log('Open the bKash checkout URL:', url);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Pay Appointment (retry payment)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\"\n}" },
+						"url": { "raw": "{{apiUrl}}/appointment/pay", "host": ["{{apiUrl}}"], "path": ["appointment", "pay"] },
+						"description": "PATIENT only. Re-initiates bKash checkout for an existing unpaid appointment and returns a fresh checkout URL."
+					}
+				},
+				{
+					"name": "bKash Callback (gateway redirect)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/appointment/callback/bkash?paymentID=TR0011xxxxxxx&status=success&signature=abc123",
+							"host": ["{{apiUrl}}"],
+							"path": ["appointment", "callback", "bkash"],
+							"query": [
+								{ "key": "paymentID", "value": "TR0011xxxxxxx", "description": "Required — from bKash." },
+								{ "key": "status", "value": "success", "description": "success | failure | cancel" },
+								{ "key": "signature", "value": "abc123", "description": "Required — from bKash." }
+							]
+						},
+						"description": "Public. bKash redirects the browser here after checkout; the handler executes the payment, confirms the appointment and 302-redirects to the frontend.\n\nYou normally do not call this by hand — it is here for inspection and for replaying a callback. All three query params are required or it 400s. Turn off \"Automatically follow redirects\" in Postman settings to see the 302."
+					}
+				},
+				{
+					"name": "Cancel Appointment (Patient)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\"\n}" },
+						"url": { "raw": "{{apiUrl}}/appointment/cancel", "host": ["{{apiUrl}}"], "path": ["appointment", "cancel"] },
+						"description": "PATIENT only. Cancels the appointment and initiates a bKash refund, subject to the cancellation window enforced in the service."
+					}
+				},
+				{
+					"name": "Update Appointment Status (Doctor)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"status\": \"ONGOING\",\n  \"appointmentId\": \"{{appointmentId}}\"\n}" },
+						"url": { "raw": "{{apiUrl}}/appointment/update", "host": ["{{apiUrl}}"], "path": ["appointment", "update"] },
+						"description": "DOCTOR only. `status`: `ONGOING` | `COMPLETED`. The appointment must be CONFIRMED or ONGOING — PENDING, COMPLETED and CANCELED are rejected by the service.\n\n⚠️ Backend bug: the route is `/update` with no URL param, but the controller reads `req.params.appointmentId`, so the id is always `undefined` and this returns 404 \"Appointment not found\". Fix by changing the route to `/update/:appointmentId` (then use the next request) or by reading `appointmentId` from the body — the body here already carries it for the latter case."
+					}
+				},
+				{
+					"name": "Update Appointment Status — :appointmentId variant (after fix)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "PATCH",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": { "mode": "raw", "raw": "{\n  \"status\": \"COMPLETED\"\n}" },
+						"url": { "raw": "{{apiUrl}}/appointment/update/{{appointmentId}}", "host": ["{{apiUrl}}"], "path": ["appointment", "update", "{{appointmentId}}"] },
+						"description": "Use this once the route becomes `router.patch('/update/:appointmentId', ...)`. Against the current code it 404s at the router."
+					}
+				},
+				{
+					"name": "My Appointments (Patient)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/appointment/my-appointments?page=1&limit=10&sortBy=createdAt&sortOrder=desc&status=",
+							"host": ["{{apiUrl}}"],
+							"path": ["appointment", "my-appointments"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "sortBy", "value": "createdAt" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "status", "value": "", "description": "PENDING | CONFIRMED | CANCELED | ONGOING | COMPLETED" }
+							]
+						},
+						"description": "PATIENT only. Captures the first appointment id into `appointmentId`."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const d = pm.response.json().data || {};",
+									"const list = d.data || d.appointments || (Array.isArray(d) ? d : []);",
+									"if (Array.isArray(list) && list.length) {",
+									"  pm.collectionVariables.set('appointmentId', list[0].id);",
+									"  console.log('appointmentId saved', list[0].id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Doctor Appointments (Doctor)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/appointment/doctor-appointments?page=1&limit=10&sortBy=createdAt&sortOrder=desc&status=",
+							"host": ["{{apiUrl}}"],
+							"path": ["appointment", "doctor-appointments"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "sortBy", "value": "createdAt" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "status", "value": "", "description": "PENDING | CONFIRMED | CANCELED | ONGOING | COMPLETED" }
+							]
+						},
+						"description": "DOCTOR only."
+					}
+				},
+				{
+					"name": "Single Appointment",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/appointment/single-appointment/{{appointmentId}}", "host": ["{{apiUrl}}"], "path": ["appointment", "single-appointment", "{{appointmentId}}"] },
+						"description": "PATIENT or DOCTOR.\n\n⚠️ Backend bug: the route declares `:id` but the controller reads `req.params.appointmentId` → always `undefined` → 404. Rename the route param to `:appointmentId` (or the controller to `req.params.id`) to make this work."
+					}
+				},
+				{
+					"name": "All Appointments (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/appointment/all-appointments?page=1&limit=10&sortBy=createdAt&sortOrder=desc&status=&doctorId=&patientId=&scheduleId=&doctorEmail=&patientEmail=",
+							"host": ["{{apiUrl}}"],
+							"path": ["appointment", "all-appointments"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "sortBy", "value": "createdAt" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "status", "value": "", "description": "PENDING | CONFIRMED | CANCELED | ONGOING | COMPLETED" },
+								{ "key": "doctorId", "value": "" },
+								{ "key": "patientId", "value": "" },
+								{ "key": "scheduleId", "value": "" },
+								{ "key": "doctorEmail", "value": "", "description": "Exact match." },
+								{ "key": "patientEmail", "value": "", "description": "Exact match." }
+							]
+						},
+						"description": "ADMIN only — SUPER_ADMIN is **not** in the allow-list for this route, so the seeded super admin gets a 403 here."
+					}
+				}
+			]
+		},
+		{
+			"name": "06 · Payment",
+			"description": "`/api/v1/payment`",
+			"item": [
+				{
+					"name": "My Payments (Patient)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/payment/my-payments?page=1&limit=10&sortBy=createdAt&sortOrder=desc",
+							"host": ["{{apiUrl}}"],
+							"path": ["payment", "my-payments"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "sortBy", "value": "createdAt" },
+								{ "key": "sortOrder", "value": "desc" }
+							]
+						},
+						"description": "PATIENT only. Saves the first payment id into `paymentId`."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const d = pm.response.json().data || {};",
+									"const list = d.data || d.payments || (Array.isArray(d) ? d : []);",
+									"if (Array.isArray(list) && list.length) pm.collectionVariables.set('paymentId', list[0].id);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "All Payments (Admin)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/payment/all-payments?page=1&limit=10&sortBy=createdAt&sortOrder=desc&status=&patientEmail=&startDate=&endDate=",
+							"host": ["{{apiUrl}}"],
+							"path": ["payment", "all-payments"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" },
+								{ "key": "sortBy", "value": "createdAt" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "status", "value": "", "description": "UNPAID | PAID | FAILED | CANCELED | REFUNDED" },
+								{ "key": "patientEmail", "value": "", "description": "Partial, case-insensitive." },
+								{ "key": "startDate", "value": "", "description": "ISO date — only applied together with endDate." },
+								{ "key": "endDate", "value": "", "description": "ISO date — only applied together with startDate." }
+							]
+						},
+						"description": "ADMIN / SUPER_ADMIN only."
+					}
+				},
+				{
+					"name": "Single Payment",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/payment/single-payment/{{paymentId}}", "host": ["{{apiUrl}}"], "path": ["payment", "single-payment", "{{paymentId}}"] },
+						"description": "ADMIN / SUPER_ADMIN / PATIENT. Patients only see their own payments."
+					}
+				}
+			]
+		},
+		{
+			"name": "07 · Prescription",
+			"description": "`/api/v1/prescription`",
+			"item": [
+				{
+					"name": "Create Prescription (Doctor)",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"findings\": \"Mild hypertension; advised lifestyle changes and follow-up in 4 weeks.\",\n  \"medicines\": [\n    {\n      \"name\": \"Amlodipine 5mg\",\n      \"dosage\": \"1 tablet\",\n      \"duration\": \"30 days\",\n      \"instructions\": \"Once daily after breakfast\"\n    },\n    {\n      \"name\": \"Napa 500mg\",\n      \"dosage\": \"1 tablet\",\n      \"duration\": \"5 days\",\n      \"instructions\": \"Twice daily after meals\"\n    }\n  ]\n}"
+						},
+						"url": { "raw": "{{apiUrl}}/prescription/create", "host": ["{{apiUrl}}"], "path": ["prescription", "create"] },
+						"description": "DOCTOR only. The appointment must belong to the authenticated doctor. Generates a PDF via PDFKit and uploads it to Cloudinary.\n\n`medicines[]`: name, dosage, duration, instructions?."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const d = pm.response.json().data;",
+									"if (d && d.id) { pm.collectionVariables.set('prescriptionId', d.id); console.log('prescriptionId saved', d.id); }"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Single Prescription",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/prescription/{{prescriptionId}}", "host": ["{{apiUrl}}"], "path": ["prescription", "{{prescriptionId}}"] },
+						"description": "DOCTOR / PATIENT / ADMIN / SUPER_ADMIN. Doctors and patients only get prescriptions tied to their own appointments."
+					}
+				}
+			]
+		},
+		{
+			"name": "08 · Analytics",
+			"description": "`/api/v1/analytics`. One endpoint per role — each returns the dashboard aggregate for the caller.",
+			"item": [
+				{
+					"name": "Admin Analytics",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/analytics/admin-analytics", "host": ["{{apiUrl}}"], "path": ["analytics", "admin-analytics"] },
+						"description": "ADMIN / SUPER_ADMIN. Platform-wide totals, revenue and status breakdowns."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] }
+						}
+					]
+				},
+				{
+					"name": "Doctor Analytics",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/analytics/doctor-analytics", "host": ["{{apiUrl}}"], "path": ["analytics", "doctor-analytics"] },
+						"description": "DOCTOR only. Scoped to the authenticated doctor."
+					}
+				},
+				{
+					"name": "Patient Analytics",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{patientToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/analytics/patient-analytics", "host": ["{{apiUrl}}"], "path": ["analytics", "patient-analytics"] },
+						"description": "PATIENT only. Scoped to the authenticated patient."
+					}
+				},
+				{
+					"name": "Negative — doctor hitting admin analytics",
+					"request": {
+						"auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{doctorToken}}", "type": "string" }] },
+						"method": "GET",
+						"header": [],
+						"url": { "raw": "{{apiUrl}}/analytics/admin-analytics", "host": ["{{apiUrl}}"], "path": ["analytics", "admin-analytics"] }
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] }
+						}
+					]
+				}
+			]
+		}
+	]
+}

@@ -16,12 +16,10 @@ const createSchedule = catchAsync(async (req, res) => {
 	});
 });
 const updateSchedule = catchAsync(async (req, res) => {
-	const payload = req.body;
-	const user = req.user as RequestUser;
 	const schedule = await scheduleService.updateSchedule(
 		req.params.id as string,
-		user,
-		payload,
+		req.user as RequestUser,
+		req.body,
 	);
 	sendResponse(res, {
 		statusCode: 201,
@@ -31,9 +29,10 @@ const updateSchedule = catchAsync(async (req, res) => {
 	});
 });
 const getMySchedule = catchAsync(async (req, res) => {
-	const payload = req.body;
-	const user = req.user as RequestUser;
-	const schedule = await scheduleService.getMySchedule(user, payload);
+	const schedule = await scheduleService.getMySchedule(
+		req.query,
+		req.user as RequestUser,
+	);
 	sendResponse(res, {
 		statusCode: httpStatus.OK,
 		success: true,
