@@ -5,6 +5,7 @@ import httpStatus from "http-status";
 import config from "./app/config";
 import { globalErrorHandler } from "./app/middleware/globalErrorHandler";
 import { notFound } from "./app/middleware/notFound";
+import { AnalyticsRoutes } from "./app/module/analytics/analytics.route";
 import { AppointmentRoutes } from "./app/module/appointment/appointment.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { DoctorRoutes } from "./app/module/doctor/doctor.route";
@@ -37,6 +38,7 @@ app.use("/api/v1/doctor", DoctorRoutes);
 app.use("/api/v1/schedule", ScheduleRoutes);
 app.use("/api/v1/payment", PaymentRoute);
 app.use("/api/v1/prescription", PrescriptionRoutes);
+app.use("/api/v1/analytics", AnalyticsRoutes);
 
 // app.get("/test", async (req: Request, res: Response) => {
 // 	const result = await getBkashIdToken();
