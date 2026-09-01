@@ -19,7 +19,7 @@ router.post(
 );
 
 router.patch(
-	"/update",
+	"/update/:appointmentId",
 	auth(Role.DOCTOR),
 	AppointmentController.updateAppointment,
 );
@@ -37,7 +37,7 @@ router.get(
 );
 
 router.get(
-	"/single-appointment/:id",
+	"/single-appointment/:appointmentId",
 	auth(Role.PATIENT, Role.DOCTOR),
 	AppointmentController.getSingleAppointments,
 );

@@ -18,13 +18,34 @@ const bookAppointment = async (
 	payload: ICreateAppointment,
 	user: RequestUser,
 ) => {
+	const patient = await prisma.patient.findUnique({
+		where: { userId: user.userId },
+	});
+	if (!patient) {
+		throw new AppError(httpStatus.NOT_FOUND, "Patient not found");
+	}
+
+	const doctor = await prisma.doctor.findUnique({
+		where: { id: payload.doctorId },
+	});
+	if (!doctor) {
+		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
+	}
+
+	const schedule = await prisma.schedule.findUnique({
+		where: { id: payload.scheduleId },
+	});
+	if (!schedule) {
+		throw new AppError(httpStatus.NOT_FOUND, "Schedule not found");
+	}
+
 	const idToken = await getBkashIdToken();
 
 	const transaction = await prisma.$transaction(async (tx) => {
 		const appointment = await tx.appointment.create({
 			data: {
 				status: AppointmentStatus.PENDING,
-				patientId: user.userId,
+				patientId: patient.id,
 				doctorId: payload.doctorId,
 				scheduleId: payload.scheduleId,
 			},
@@ -272,7 +293,7 @@ const payAppointment = async (appointmentId: string, user: RequestUser) => {
 const cancelAppointment = async (appointmentId: string, user: RequestUser) => {
 	const idToken = await getBkashIdToken();
 	const appointment = await prisma.appointment.findUnique({
-		where: { id: appointmentId, Patient: { id: user.userId } },
+		where: { id: appointmentId, Patient: { userId: user.userId } },
 		include: { payment: true, Schedule: true, Doctor: true, Patient: true },
 	});
 
@@ -371,7 +392,7 @@ const updateAppointment = async (
 	user: RequestUser,
 ) => {
 	const doctor = await prisma.doctor.findUnique({
-		where: { id: user.userId },
+		where: { userId: user.userId },
 	});
 	if (!doctor) {
 		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
@@ -415,7 +436,7 @@ const updateAppointment = async (
 
 const getMyAppointments = async (query: IQuery, user: RequestUser) => {
 	const patient = await prisma.patient.findUnique({
-		where: { id: user.userId },
+		where: { userId: user.userId },
 	});
 	if (!patient) {
 		throw new AppError(httpStatus.NOT_FOUND, "Patient not found");
@@ -425,7 +446,7 @@ const getMyAppointments = async (query: IQuery, user: RequestUser) => {
 	const skip = (page - 1) * limit;
 	const sortBy = query.sortBy || "createdAt";
 	const sortOrder = query.sortOrder || "desc";
-	const andConditions: AppointmentWhereInput[] = [{ patientId: user.userId }];
+	const andConditions: AppointmentWhereInput[] = [{ patientId: patient.id }];
 	if (query.status) {
 		andConditions.push({ status: query.status as AppointmentStatus });
 	}
@@ -461,12 +482,12 @@ const getDoctorAppointments = async (query: IQuery, user: RequestUser) => {
 	const sortBy = query.sortBy || "createdAt";
 	const sortOrder = query.sortOrder || "desc";
 	const doctor = await prisma.doctor.findUnique({
-		where: { id: user.userId },
+		where: { userId: user.userId },
 	});
 	if (!doctor) {
 		throw new AppError(httpStatus.NOT_FOUND, "Doctor not found");
 	}
-	const andConditions: AppointmentWhereInput[] = [{ doctorId: user.userId }];
+	const andConditions: AppointmentWhereInput[] = [{ doctorId: doctor.id }];
 	if (query.status) {
 		andConditions.push({ status: query.status as AppointmentStatus });
 	}
@@ -559,9 +580,14 @@ const getSingleAppointments = async (
 	if (!appointment) {
 		throw new AppError(httpStatus.NOT_FOUND, "Appointment not found");
 	}
+	const [patient, doctor] = await Promise.all([
+		prisma.patient.findUnique({ where: { userId: user.userId } }),
+		prisma.doctor.findUnique({ where: { userId: user.userId } }),
+	]);
+
 	if (
-		appointment.patientId !== user.userId ||
-		appointment.doctorId !== user.userId
+		appointment.patientId !== patient?.id &&
+		appointment.doctorId !== doctor?.id
 	) {
 		throw new AppError(
 			httpStatus.FORBIDDEN,
